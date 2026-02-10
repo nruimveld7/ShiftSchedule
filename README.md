@@ -1,42 +1,142 @@
-# sv
+# Shift Schedule
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+Database-first shift scheduling application built with SvelteKit + TypeScript, backed by Microsoft SQL Server, with Microsoft Entra ID authentication.
 
-## Creating a project
+## Purpose
 
-If you're seeing this, you've probably already done this step. Congrats!
+This project replaces a spreadsheet-driven schedule workflow with an effective-dated/event-driven model.
 
-```sh
-# create a new project
-npx sv create my-app
+Core goals:
+- Manage schedules and access in a database-first way.
+- Support schedule-specific customization (patterns, employee types, coverage codes).
+- Render schedules from effective-dated data, not static spreadsheet cells.
+
+## Tech Stack
+
+- Frontend/app: SvelteKit + TypeScript
+- Database: Microsoft SQL Server
+- Auth: Microsoft Entra ID (OIDC + PKCE + certificate-based client assertion)
+- Session store: SQL table `dbo.UserSessions`
+- Runtime/deployment for local: Docker Compose + nginx reverse proxy
+
+## Project Layout
+
+- `src/hooks.server.ts`: global auth/access guard
+- `src/lib/server/auth.ts`: OIDC login/callback/session logic
+- `src/lib/server/access.ts`: access-state resolution
+- `src/routes/setup/+page.server.ts`: first-time setup action
+- `db/schema.sql`: authoritative database schema
+- `db/seed.sql`: optional seed data
+
+## Access Model
+
+Roles are fixed in `dbo.Roles`:
+- `Member`
+- `Maintainer`
+- `Manager`
+
+Bootstrap model:
+- `BOOTSTRAP_MANAGER_OIDS` contains Entra OIDs allowed to perform first-time setup.
+- Bootstrap users are mirrored in `dbo.BootstrapManagers`.
+
+Current guard behavior (`src/hooks.server.ts`):
+- Public routes: `/auth/login`, `/auth/callback`, `/favicon.ico`
+- No valid session: redirect to `/auth/login`
+- Bootstrap user with no schedule access: redirect to `/setup`
+- User without access: redirect to `/unauthorized`
+- Authorized users are redirected away from `/unauthorized` to `/`
+
+## Current Routes
+
+- `/`: main app shell (loads active schedule + current user role)
+- `/setup`: first-time schedule creation (bootstrap-only)
+- `/unauthorized`: access-pending page
+- `/test`: dev/test utility page and API helpers
+
+## Database Model (Current)
+
+See `db/schema.sql` for exact definitions.
+
+Primary tables:
+- `dbo.Users`
+- `dbo.BootstrapManagers`
+- `dbo.Schedules`
+- `dbo.Roles`
+- `dbo.ScheduleUsers`
+- `dbo.Patterns`
+- `dbo.EmployeeTypes`
+- `dbo.CoverageCodes`
+- `dbo.ScheduleUserTypes`
+- `dbo.ScheduleEvents`
+- `dbo.UserSessions` (created/maintained by auth layer)
+
+Schema notes:
+- Soft-delete fields (`IsActive`, `DeletedAt`, `DeletedBy`) are used across business tables.
+- Date-range constraints and overlap protections are enforced in SQL.
+- Indexes are included for schedule/month window queries.
+
+## Prerequisites
+
+- Docker + Docker Compose
+- Yarn (project uses Yarn 4)
+- Parent compose directory with env files and scripts:
+  - `../.env.dev`
+  - `../scripts/StartDev.sh`
+  - `../scripts/StopDev.sh`
+  - `../scripts/SqlRun.sh`
+
+## Environment Variables
+
+Used by app and DB connection logic:
+
+- SQL: `MSSQL_HOST`, `MSSQL_PORT`, `MSSQL_USER`, `MSSQL_PASSWORD`, `MSSQL_DATABASE`, `MSSQL_ENCRYPT`, `MSSQL_TRUST_SERVER_CERT`
+- Entra/Auth: `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_REDIRECT_URI`, `ENTRA_CLIENT_CERT_PRIVATE_KEY_PATH`, `ENTRA_CLIENT_CERT_PUBLIC_CERT_PATH`
+- App: `APP_SESSION_SECRET`, `BOOTSTRAP_MANAGER_OIDS`
+- SQL container helper scripts: `SA_PASSWORD`
+
+`BOOTSTRAP_MANAGER_OIDS` accepts comma, semicolon, or whitespace delimiters.
+
+## Local Development
+
+From this project directory (`shiftschedule`):
+
+Start dev stack:
+```bash
+../scripts/StartDev.sh
 ```
 
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-npx sv create --template demo --types ts --add prettier eslint sveltekit-adapter="adapter:node" vitest="usages:unit,component" --install yarn .
+Stop dev stack:
+```bash
+../scripts/StopDev.sh
 ```
 
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+Apply schema:
+```bash
+/bin/bash -lc "set -a; source ../.env.dev; set +a; ../scripts/SqlRun.sh dev shiftschedule < db/schema.sql"
 ```
 
-## Building
-
-To create a production version of your app:
-
-```sh
-npm run build
+Optional seed data:
+```bash
+/bin/bash -lc "set -a; source ../.env.dev; set +a; ../scripts/SqlRun.sh dev shiftschedule < db/seed.sql"
 ```
 
-You can preview the production build with `npm run preview`.
+Run app checks from this directory:
+```bash
+yarn check
+yarn lint
+yarn test:unit
+```
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+## First-Time Setup Flow
+
+1. User logs in via Entra (`/auth/login` -> `/auth/callback`).
+2. Session is created in `dbo.UserSessions` (cookie: `app_session`).
+3. If user is bootstrap and there are no schedule assignments yet, user is redirected to `/setup`.
+4. Setup creates the first schedule and assigns the creator as `Manager` on that schedule.
+5. Session `ActiveScheduleId` is set to the newly created schedule.
+
+## Notes
+
+- `db/schema.sql` is the source of truth for data model changes.
+- Access control is enforced on the backend; frontend state is not trusted for authorization.
+- Use Entra OID (`UserOid`) as the stable user identity key.
