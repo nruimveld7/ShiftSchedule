@@ -4,7 +4,7 @@ import { getActiveScheduleId, setActiveScheduleForSession } from '$lib/server/au
 
 export const load: PageServerLoad = async ({ locals, cookies }) => {
 	const user = locals.user;
-	if (!user) return { schedule: null, userRole: null };
+	if (!user) return { schedule: null, userRole: null, currentUserOid: null };
 
 	let scheduleId = await getActiveScheduleId(cookies);
 	if (!scheduleId) {
@@ -24,7 +24,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}
 	}
 
-	if (!scheduleId) return { schedule: null, userRole: null };
+	if (!scheduleId) return { schedule: null, userRole: null, currentUserOid: user.id };
 
 	const pool = await GetPool();
 	const scheduleResult = await pool
@@ -60,6 +60,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 
 	return {
 		schedule: scheduleResult.recordset?.[0] ?? null,
-		userRole: roleResult.recordset?.[0]?.RoleName ?? null
+		userRole: roleResult.recordset?.[0]?.RoleName ?? null,
+		currentUserOid: user.id
 	};
 };

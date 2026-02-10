@@ -1,0 +1,109 @@
+* {
+  box-sizing: border-box;
+}
+
+:where(*) {
+  scrollbar-color: var(--scrollbar-thumb-bg) var(--scrollbar-track-bg);
+  scrollbar-width: thin;
+}
+
+:where(*)::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+:where(*)::-webkit-scrollbar-track {
+  background: var(--scrollbar-track-bg);
+  border-radius: var(--scrollbar-radius);
+}
+
+:where(*)::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb-bg);
+  border: var(--scrollbar-thumb-border);
+  border-radius: var(--scrollbar-radius);
+}
+
+:where(*)::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-bg-hover);
+}
+
+body.scrollbar-dragging,
+body.scrollbar-dragging * {
+  cursor: grabbing !important;
+}
+
+body.scrollbar-dragging * {
+  pointer-events: none !important;
+}
+
+body.scrollbar-dragging .teamSetupScrollRail,
+body.scrollbar-dragging .teamSetupScrollThumb,
+body.scrollbar-dragging .appScrollRail,
+body.scrollbar-dragging .appScrollThumb,
+body.scrollbar-dragging .gridScrollRail,
+body.scrollbar-dragging .gridScrollThumb,
+body.scrollbar-dragging .gridScrollRailHorizontal,
+body.scrollbar-dragging .gridScrollThumbHorizontal,
+body.scrollbar-dragging .pickerScrollRail,
+body.scrollbar-dragging .pickerScrollThumb {
+  pointer-events: auto !important;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Liberation Sans", sans-serif;
+
+  /* Neutral steel base (no blue wash) + SDI red energy */
+  background:
+    radial-gradient(1100px 520px at 50% -10%, rgba(200, 16, 46, .26), transparent 60%),
+    radial-gradient(900px 500px at 12% 12%, rgba(255, 255, 255, .06), transparent 62%),
+    radial-gradient(900px 520px at 88% 14%, rgba(255, 255, 255, .05), transparent 62%),
+    linear-gradient(180deg, var(--bg-2), var(--bg-0));
+  position: relative;
+  overflow-x: hidden;
+}
+
+body.app-shell-route {
+  overflow-y: clip;
+}
+
+/* Industrial grain + subtle steel striation (neutral) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, .026), transparent 45%, rgba(255, 255, 255, .018)),
+    radial-gradient(1200px 600px at 50% 20%, rgba(255, 255, 255, .040), transparent 65%);
+  background-repeat: no-repeat;
+  background-size: 180% 180%, 100% 100%;
+  mix-blend-mode: overlay;
+  opacity: .62;
+  transform: translateZ(0);
+}
+
+
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(1100px 520px at 50% -10%, rgba(200, 16, 46, .18), transparent 60%),
+    radial-gradient(900px 520px at 12% 14%, rgba(0, 0, 0, .04), transparent 62%),
+    radial-gradient(900px 520px at 88% 14%, rgba(0, 0, 0, .03), transparent 62%),
+    linear-gradient(180deg, var(--bg-2), var(--bg-0));
+}
+
+:root[data-theme="light"] body::before {
+  opacity: .28;
+  mix-blend-mode: multiply;
+  background:
+    linear-gradient(135deg, rgba(0, 0, 0, .035), transparent 45%, rgba(0, 0, 0, .022)),
+    radial-gradient(1200px 600px at 50% 20%, rgba(0, 0, 0, .035), transparent 65%);
+  background-repeat: no-repeat;
+  background-size: 180% 180%, 100% 100%;
+}

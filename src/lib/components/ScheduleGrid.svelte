@@ -18,20 +18,13 @@
 	let gridEl: HTMLDivElement | null = null;
 	let bandEl: HTMLDivElement | null = null;
 	let gridWrapEl: HTMLDivElement | null = null;
-	let railEl: HTMLDivElement | null = null;
 	let horizontalRailEl: HTMLDivElement | null = null;
 	let resizeQueued = false;
 	let mounted = false;
-	let showCustomScrollbar = false;
 	let showHorizontalScrollbar = false;
-	let thumbHeightPx = 0;
-	let thumbTopPx = 0;
 	let horizontalThumbWidthPx = 0;
 	let horizontalThumbLeftPx = 0;
-	let isDraggingScrollbar = false;
 	let isDraggingHorizontalScrollbar = false;
-	let dragStartY = 0;
-	let dragStartThumbTopPx = 0;
 	let dragStartX = 0;
 	let dragStartHorizontalThumbLeftPx = 0;
 
@@ -86,32 +79,10 @@
 	function updateCustomScrollbar() {
 		if (!gridWrapEl) return;
 
-		const scrollHeight = gridWrapEl.scrollHeight;
-		const clientHeight = gridWrapEl.clientHeight;
-		const scrollTop = gridWrapEl.scrollTop;
-		const hasOverflow = scrollHeight > clientHeight + 1;
 		const scrollWidth = gridWrapEl.scrollWidth;
 		const clientWidth = gridWrapEl.clientWidth;
 		const scrollLeft = gridWrapEl.scrollLeft;
 		const hasHorizontalOverflow = scrollWidth > clientWidth + 1;
-
-		showCustomScrollbar = hasOverflow;
-		if (!hasOverflow) {
-			thumbHeightPx = 0;
-			thumbTopPx = 0;
-		} else {
-			const railHeight = railEl?.clientHeight ?? Math.max(clientHeight - 24, 0);
-			if (railHeight > 0) {
-				const minThumbHeight = 36;
-				const nextThumbHeight = Math.max(minThumbHeight, (railHeight * clientHeight) / scrollHeight);
-				const maxThumbTop = Math.max(railHeight - nextThumbHeight, 0);
-				const maxScrollTop = Math.max(scrollHeight - clientHeight, 1);
-				const nextThumbTop = (scrollTop / maxScrollTop) * maxThumbTop;
-
-				thumbHeightPx = nextThumbHeight;
-				thumbTopPx = clamp(nextThumbTop, 0, maxThumbTop);
-			}
-		}
 
 		showHorizontalScrollbar = hasHorizontalOverflow;
 		if (!hasHorizontalOverflow) {
@@ -137,21 +108,9 @@
 	}
 
 	function onGridScroll() {
-		if (!isDraggingScrollbar && !isDraggingHorizontalScrollbar) {
+		if (!isDraggingHorizontalScrollbar) {
 			updateCustomScrollbar();
 		}
-	}
-
-	function onDragMove(event: MouseEvent) {
-		if (!isDraggingScrollbar || !gridWrapEl || !railEl) return;
-
-		const railHeight = railEl.clientHeight;
-		const maxThumbTop = Math.max(railHeight - thumbHeightPx, 0);
-		const nextThumbTop = clamp(dragStartThumbTopPx + (event.clientY - dragStartY), 0, maxThumbTop);
-		const maxScrollTop = Math.max(gridWrapEl.scrollHeight - gridWrapEl.clientHeight, 0);
-
-		thumbTopPx = nextThumbTop;
-		gridWrapEl.scrollTop = maxThumbTop > 0 ? (nextThumbTop / maxThumbTop) * maxScrollTop : 0;
 	}
 
 	function setGlobalScrollbarDragging(active: boolean) {
@@ -167,17 +126,6 @@
 		body.classList.toggle('scrollbar-dragging', next > 0);
 	}
 
-	function stopDragging() {
-		if (isDraggingScrollbar) {
-			setGlobalScrollbarDragging(false);
-		}
-		isDraggingScrollbar = false;
-		if (typeof window !== 'undefined') {
-			window.removeEventListener('mousemove', onDragMove);
-			window.removeEventListener('mouseup', stopDragging);
-		}
-	}
-
 	function onHorizontalDragMove(event: MouseEvent) {
 		if (!isDraggingHorizontalScrollbar || !gridWrapEl || !horizontalRailEl) return;
 
@@ -191,8 +139,7 @@
 		const maxScrollLeft = Math.max(gridWrapEl.scrollWidth - gridWrapEl.clientWidth, 0);
 
 		horizontalThumbLeftPx = nextThumbLeft;
-		gridWrapEl.scrollLeft =
-			maxThumbLeft > 0 ? (nextThumbLeft / maxThumbLeft) * maxScrollLeft : 0;
+		gridWrapEl.scrollLeft = maxThumbLeft > 0 ? (nextThumbLeft / maxThumbLeft) * maxScrollLeft : 0;
 	}
 
 	function stopHorizontalDragging() {
@@ -204,34 +151,6 @@
 			window.removeEventListener('mousemove', onHorizontalDragMove);
 			window.removeEventListener('mouseup', stopHorizontalDragging);
 		}
-	}
-
-	function startThumbDrag(event: MouseEvent) {
-		if (!showCustomScrollbar) return;
-		event.preventDefault();
-		event.stopPropagation();
-		isDraggingScrollbar = true;
-		setGlobalScrollbarDragging(true);
-		dragStartY = event.clientY;
-		dragStartThumbTopPx = thumbTopPx;
-		window.addEventListener('mousemove', onDragMove);
-		window.addEventListener('mouseup', stopDragging);
-	}
-
-	function handleRailClick(event: MouseEvent) {
-		if (!gridWrapEl || !railEl || !showCustomScrollbar) return;
-		if (event.target !== railEl) return;
-
-		const rect = railEl.getBoundingClientRect();
-		const desiredTop = clamp(
-			event.clientY - rect.top - thumbHeightPx / 2,
-			0,
-			Math.max(rect.height - thumbHeightPx, 0)
-		);
-		const maxThumbTop = Math.max(rect.height - thumbHeightPx, 1);
-		const maxScrollTop = Math.max(gridWrapEl.scrollHeight - gridWrapEl.clientHeight, 0);
-		gridWrapEl.scrollTop = (desiredTop / maxThumbTop) * maxScrollTop;
-		updateCustomScrollbar();
 	}
 
 	function startHorizontalThumbDrag(event: MouseEvent) {
@@ -296,7 +215,6 @@
 	}
 
 	onDestroy(() => {
-		stopDragging();
 		stopHorizontalDragging();
 	});
 </script>
@@ -348,46 +266,25 @@
 				</div>
 			{/each}
 
-				{#each groups as group}
-					<GroupRow
-						groupName={group.category}
-						employeeCount={group.employees.length}
-						collapsed={collapsed[group.category] === true}
-						{monthDays}
-						onToggle={() => onToggleGroup(group.category)}
-					/>
+			{#each groups as group}
+				<GroupRow
+					groupName={group.category}
+					employeeCount={group.employees.length}
+					collapsed={collapsed[group.category] === true}
+					{monthDays}
+					onToggle={() => onToggleGroup(group.category)}
+				/>
 
-					{#if !collapsed[group.category]}
-						{#each group.employees as employee}
-							<EmployeeRow
-								{employee}
-								{monthDays}
-								{overrides}
-							/>
-						{/each}
-					{/if}
-				{/each}
+				{#if !collapsed[group.category]}
+					{#each group.employees as employee}
+						<EmployeeRow {employee} {monthDays} {overrides} />
+					{/each}
+				{/if}
+			{/each}
 
 			<div class="footerBar"></div>
 		</div>
 	</div>
-	{#if showCustomScrollbar}
-		<div
-			class="gridScrollRail"
-			role="presentation"
-			aria-hidden="true"
-			bind:this={railEl}
-			on:mousedown={handleRailClick}
-		>
-			<div
-				class="gridScrollThumb"
-				class:dragging={isDraggingScrollbar}
-				role="presentation"
-				style={`height:${thumbHeightPx}px;transform:translateY(${thumbTopPx}px);`}
-				on:mousedown={startThumbDrag}
-			></div>
-		</div>
-	{/if}
 	{#if showHorizontalScrollbar}
 		<div
 			class="gridScrollRailHorizontal"

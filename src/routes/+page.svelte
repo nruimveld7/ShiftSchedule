@@ -4,6 +4,7 @@
   export let data: {
     schedule: { ScheduleId: number; Name: string } | null;
     userRole: ScheduleRole | null;
+    currentUserOid: string | null;
   };
 
   const scheduleName = data.schedule?.Name ?? 'Shift Schedule';
@@ -18,4 +19,5 @@
   showLegend={false}
   {canMaintainTeam}
   {canAssignManagerRole}
+  currentUserOid={data.currentUserOid ?? ''}
 />

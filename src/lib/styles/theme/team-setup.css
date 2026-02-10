@@ -1,0 +1,500 @@
+.teamSetupBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--modal-backdrop);
+  backdrop-filter: blur(4px);
+}
+
+.teamSetupModal {
+  width: min(1080px, calc(100dvw - 40px));
+  height: min(760px, calc(100dvh - 40px));
+  overflow: hidden;
+  border: 1px solid var(--modal-border);
+  border-radius: 16px;
+  background: var(--modal-surface);
+  box-shadow: var(--shadow);
+  position: relative;
+}
+
+.teamSetupModalScroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 10px;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.teamSetupHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-bottom: 1px solid var(--grid-2);
+}
+
+.teamSetupHeader h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.teamSetupHeader p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.teamSetupBody {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) 1fr;
+  min-height: 0;
+  flex: 1;
+  overflow: visible;
+}
+
+.teamSetupNav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-right: 1px solid var(--grid-2);
+}
+
+.teamSetupNavBtn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 10px 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.teamSetupNavBtn:hover {
+  background: var(--interactive-bg-hover);
+  border-color: var(--interactive-border);
+}
+
+.teamSetupNavBtn.active {
+  background: linear-gradient(180deg, var(--accent-2), var(--accent-3));
+  border-color: var(--modal-border);
+}
+
+.teamSetupPanel {
+  padding: 16px;
+  overflow: visible;
+}
+
+.setupSection h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.usersPaneHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.setupSection p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.setupCard {
+  margin-top: 14px;
+  border: 1px solid var(--grid-2);
+  border-radius: 12px;
+  background: var(--panel-bg);
+  padding: 14px;
+}
+
+.setupCard h4 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: .02em;
+}
+
+.tableWrap {
+  max-height: none;
+  overflow: visible;
+}
+
+.setupGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.setupGrid label,
+.roleFieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 750;
+  color: var(--muted);
+}
+
+.roleFieldset {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--grid-2);
+  border-radius: 10px;
+}
+
+.roleFieldset legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-weight: 850;
+}
+
+.roleFieldset label {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.roleFieldset label:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.roleFieldset label input {
+  cursor: pointer;
+}
+
+.roleFieldset label input:disabled {
+  cursor: not-allowed;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--interactive-border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.input:focus {
+  outline: none;
+  border-color: rgba(200, 16, 46, .72);
+  box-shadow: var(--focus-ring);
+}
+
+.setupUserCombo {
+  position: relative;
+}
+
+.setupUserComboList {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid var(--interactive-border);
+  background: var(--panel-bg);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.2);
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+  z-index: 20;
+}
+
+.setupUserComboItem {
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 10px;
+}
+
+button.setupUserComboItem {
+  cursor: pointer;
+}
+
+button.setupUserComboItem:hover {
+  background: var(--interactive-bg-hover);
+  border-color: var(--interactive-border-hover);
+}
+
+.setupUserComboStatus {
+  color: var(--muted);
+}
+
+.setupUserComboError {
+  color: #c64040;
+}
+
+.setupTable {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.setupTable th,
+.setupTable td {
+  text-align: left;
+  border-bottom: 1px solid var(--grid-2);
+  padding: 9px 8px;
+  vertical-align: middle;
+}
+
+.setupTable th {
+  background: var(--table-header-bg);
+  font-size: 12px;
+  letter-spacing: .02em;
+  color: var(--muted);
+}
+
+.tableSortBtn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tableSortBtn:hover {
+  color: var(--text);
+}
+
+.sortIndicator {
+  display: inline-block;
+  min-width: 12px;
+  text-align: center;
+  opacity: .5;
+  color: var(--muted);
+}
+
+.sortIndicator.active {
+  opacity: 1;
+  color: var(--text);
+}
+
+.setupActions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.setupActionAlert {
+  margin-top: 8px;
+  text-align: center;
+  color: var(--alert-text);
+}
+
+.readOnlyField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--grid-2);
+  border-radius: 10px;
+  background: var(--input-bg);
+  padding: 9px 10px;
+}
+
+.readOnlyLabel {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 850;
+}
+
+.userSummaryCard {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid var(--grid-2);
+  border-radius: 10px;
+  background: var(--input-bg);
+  padding: 9px 10px;
+}
+
+.userSummaryName {
+  font-weight: 900;
+}
+
+.userSummaryEmail {
+  color: var(--muted);
+}
+
+.iconSquareBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--interactive-border);
+  background: var(--interactive-bg);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.iconSquareBtn:hover {
+  background: var(--interactive-bg-hover);
+  border-color: var(--interactive-border-hover);
+}
+
+.iconSquareBtn svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.iconActionBtn {
+  border: 1px solid var(--interactive-border);
+  background: var(--interactive-bg);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-weight: 850;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.iconActionBtn:hover {
+  background: var(--interactive-bg-hover);
+  border-color: var(--interactive-border-hover);
+}
+
+.iconActionBtn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.actionBtn {
+  width: 160px;
+  justify-content: center;
+}
+
+.calendarPlusIcon .iconPlus {
+  stroke-width: 1;
+}
+
+.srOnly {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.teamSetupModalScroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.teamSetupScrollRail {
+  position: absolute;
+  top: 12px;
+  right: 5px;
+  bottom: 12px;
+  width: var(--scrollbar-size);
+  border-radius: var(--scrollbar-radius);
+  background: var(--scrollbar-track-bg);
+}
+
+.teamSetupScrollThumb {
+  width: 100%;
+  border-radius: var(--scrollbar-radius);
+  background: var(--scrollbar-thumb-bg);
+  border: var(--scrollbar-thumb-border);
+  cursor: grab;
+}
+
+.teamSetupScrollThumb:hover {
+  background: var(--scrollbar-thumb-bg-hover);
+}
+
+.teamSetupScrollThumb.dragging {
+  background: var(--scrollbar-thumb-bg-hover);
+}
+
+.teamSetupScrollThumb:active {
+  cursor: grabbing;
+}
+
+body.team-modal-open {
+  overflow: hidden;
+}
+
+.iconActionBtn.primary {
+  background: linear-gradient(180deg, rgba(200, 16, 46, .46), rgba(200, 16, 46, .18));
+  border-color: rgba(200, 16, 46, .62);
+}
+
+.iconActionBtn.primary:hover {
+  background: linear-gradient(180deg, rgba(200, 16, 46, .56), rgba(200, 16, 46, .20));
+}
+
+.iconActionBtn.danger {
+  border-color: rgba(200, 16, 46, .46);
+  color: rgba(255, 170, 170, .95);
+}
+
+.iconActionBtn.danger:hover {
+  background: rgba(200, 16, 46, .14);
+}
+
+
+@media (max-width: 900px) {
+  .teamSetupBackdrop {
+    padding: 12px;
+    align-items: flex-start;
+  }
+
+  .teamSetupModal {
+    width: 100%;
+    height: calc(100dvh - 24px);
+  }
+
+  .teamSetupBody {
+    display: block;
+  }
+
+  .teamSetupNav {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--grid-2);
+    overflow-x: auto;
+  }
+}

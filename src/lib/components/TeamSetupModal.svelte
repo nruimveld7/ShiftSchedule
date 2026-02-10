@@ -7,7 +7,7 @@
 	type UsersViewMode = 'list' | 'add' | 'edit';
 	type SortKey = 'name' | 'email' | 'role';
 	type SortDirection = 'asc' | 'desc';
-	type AccessUser = { name: string; email: string; role: UserRole };
+	type AccessUser = { userOid: string; name: string; email: string; role: UserRole };
 	type EntraUser = {
 		id: string;
 		displayName?: string;
@@ -17,6 +17,7 @@
 
 	export let open = false;
 	export let canAssignManagerRole = false;
+	export let currentUserOid = '';
 	export let onClose: () => void = () => {};
 
 	let activeSection: SetupSection = 'users';
@@ -41,20 +42,22 @@
 	let addUserSearchTimer: ReturnType<typeof setTimeout> | null = null;
 	let showAddUserResults = false;
 	let addUserComboEl: HTMLDivElement | null = null;
+	let addUserSelectionCommitted = false;
+	let selectedAddUser: EntraUser | null = null;
+	let teamUsers: AccessUser[] = [];
+	let teamUsersLoading = false;
+	let teamUsersError = '';
+	let addUserActionError = '';
+	let editUserActionError = '';
+	let addUserActionLoading = false;
+	let editUserActionLoading = false;
+	let wasUsersListVisible = false;
+	let canAssignManagerRoleEffective = false;
 
 	const sections: { id: SetupSection; label: string }[] = [
 		{ id: 'users', label: 'Users' },
 		{ id: 'shifts', label: 'Shifts' },
 		{ id: 'assignments', label: 'Assignments' }
-	];
-
-	const stubUsers: AccessUser[] = [
-		{ name: 'Alex Doe', email: 'alex@example.com', role: 'Member' },
-		{ name: 'Sam Lee', email: 'sam@example.com', role: 'Maintainer' },
-		{ name: 'Chris Park', email: 'chris@example.com', role: 'Member' },
-		{ name: 'Taylor Kim', email: 'taylor@example.com', role: 'Maintainer' },
-		{ name: 'Jordan Fox', email: 'jordan@example.com', role: 'Member' },
-		{ name: 'Riley Quinn', email: 'riley@example.com', role: 'Member' }
 	];
 
 	const stubShifts = [
@@ -96,6 +99,12 @@
 		addUsersError = '';
 		addUsersLoading = false;
 		showAddUserResults = false;
+		addUserSelectionCommitted = false;
+		selectedAddUser = null;
+		addUserActionError = '';
+		editUserActionError = '';
+		addUserActionLoading = false;
+		editUserActionLoading = false;
 		if (addUserSearchTimer) {
 			clearTimeout(addUserSearchTimer);
 			addUserSearchTimer = null;
@@ -108,6 +117,10 @@
 		addUsersError = '';
 		addUsersLoading = false;
 		showAddUserResults = false;
+		addUserSelectionCommitted = false;
+		selectedAddUser = null;
+		addUserActionError = '';
+		addUserActionLoading = false;
 		if (addUserSearchTimer) {
 			clearTimeout(addUserSearchTimer);
 			addUserSearchTimer = null;
@@ -119,6 +132,8 @@
 	function openEditUserView(user: AccessUser) {
 		selectedUserForEdit = user;
 		selectedEditRole = user.role;
+		editUserActionError = '';
+		editUserActionLoading = false;
 		usersViewMode = 'edit';
 	}
 
@@ -155,10 +170,39 @@
 		addUsersError = '';
 		addUsersLoading = false;
 		showAddUserResults = false;
+		addUserSelectionCommitted = false;
+		selectedAddUser = null;
+		addUserActionError = '';
+		editUserActionError = '';
+		addUserActionLoading = false;
+		editUserActionLoading = false;
+		teamUsers = [];
+		teamUsersError = '';
+		teamUsersLoading = false;
+		wasUsersListVisible = false;
 		if (addUserSearchTimer) {
 			clearTimeout(addUserSearchTimer);
 			addUserSearchTimer = null;
 		}
+	}
+
+	async function parseErrorMessage(response: Response, fallback: string): Promise<string> {
+		let text = '';
+		try {
+			text = (await response.text()).trim();
+		} catch {
+			return fallback;
+		}
+		if (!text) return fallback;
+		try {
+			const data = JSON.parse(text) as { message?: string };
+			if (typeof data.message === 'string' && data.message.trim()) {
+				return data.message;
+			}
+		} catch {
+			// treat as plain text
+		}
+		return text;
 	}
 
 	function userLabel(user: EntraUser): string {
@@ -200,10 +244,30 @@
 		}
 	}
 
+	async function loadTeamUsers() {
+		teamUsersLoading = true;
+		teamUsersError = '';
+		try {
+			const result = await fetch(`${base}/api/team/users`, { method: 'GET' });
+			if (!result.ok) {
+				const text = await result.text();
+				throw new Error(text || `Request failed: ${result.status}`);
+			}
+			const data = await result.json();
+			teamUsers = data.users ?? [];
+		} catch (error) {
+			teamUsersError = error instanceof Error ? error.message : 'Failed to load team users';
+		} finally {
+			teamUsersLoading = false;
+		}
+	}
+
 	function onAddUserQueryInput(event: Event) {
 		const target = event.target as HTMLInputElement;
 		addUserQuery = target.value;
-		showAddUserResults = true;
+		addUserSelectionCommitted = false;
+		selectedAddUser = null;
+		addUserActionError = '';
 		if (addUserSearchTimer) clearTimeout(addUserSearchTimer);
 		addUserSearchTimer = setTimeout(() => {
 			void loadAddUsers(addUserQuery);
@@ -212,6 +276,9 @@
 
 	function onAddUserSelect(user: EntraUser) {
 		addUserQuery = userLabel(user);
+		addUserSelectionCommitted = true;
+		selectedAddUser = user;
+		addUserActionError = '';
 		showAddUserResults = false;
 	}
 
@@ -219,10 +286,96 @@
 		showAddUserResults = false;
 	}
 
-	function onAddUserFocus() {
+	function onAddUserComboMouseDown(event: MouseEvent) {
+		const target = event.target as HTMLElement | null;
+		if (target?.closest('.setupUserComboItem')) return;
+		if (addUserSelectionCommitted) return;
 		showAddUserResults = true;
 		if (addUsers.length === 0 && addUserQuery.trim().length > 0) {
 			void loadAddUsers(addUserQuery);
+		}
+	}
+
+	async function handleAddUser() {
+		addUserActionError = '';
+		if (addUserActionLoading) return;
+		if (!selectedAddUser) {
+			addUserActionError = 'Select a user from the list before adding.';
+			return;
+		}
+
+		addUserActionLoading = true;
+		try {
+			const result = await fetch(`${base}/api/team/users`, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					userOid: selectedAddUser.id,
+					name: selectedAddUser.displayName ?? null,
+					email: selectedAddUser.mail ?? selectedAddUser.userPrincipalName ?? null,
+					role: selectedAddRole
+				})
+			});
+			if (!result.ok) {
+				throw new Error(await parseErrorMessage(result, 'Failed to add user'));
+			}
+			await loadTeamUsers();
+			resetUsersPane();
+		} catch (error) {
+			addUserActionError = error instanceof Error ? error.message : 'Failed to add user';
+		} finally {
+			addUserActionLoading = false;
+		}
+	}
+
+	async function handleSaveUserEdit() {
+		editUserActionError = '';
+		if (editUserActionLoading || !selectedUserForEdit) return;
+
+		editUserActionLoading = true;
+		try {
+			const result = await fetch(`${base}/api/team/users`, {
+				method: 'PATCH',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					userOid: selectedUserForEdit.userOid,
+					role: selectedEditRole
+				})
+			});
+			if (!result.ok) {
+				throw new Error(await parseErrorMessage(result, 'Failed to update user'));
+			}
+			await loadTeamUsers();
+			resetUsersPane();
+		} catch (error) {
+			editUserActionError = error instanceof Error ? error.message : 'Failed to update user';
+		} finally {
+			editUserActionLoading = false;
+		}
+	}
+
+	async function handleRemoveUser() {
+		editUserActionError = '';
+		if (editUserActionLoading || !selectedUserForEdit) return;
+
+		editUserActionLoading = true;
+		try {
+			const result = await fetch(`${base}/api/team/users`, {
+				method: 'DELETE',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					userOid: selectedUserForEdit.userOid
+				})
+			});
+			if (!result.ok) {
+				throw new Error(await parseErrorMessage(result, 'Failed to remove user'));
+			}
+			await loadTeamUsers();
+			resetUsersPane();
+		} catch (error) {
+			editUserActionError = error instanceof Error ? error.message : 'Failed to remove user';
+		} finally {
+			editUserActionLoading = false;
 		}
 	}
 
@@ -332,12 +485,26 @@
     updateCustomScrollbar();
   }
 
-	$: sortedUsers = [...stubUsers].sort((a, b) => {
+	$: sortedUsers = [...teamUsers].sort((a, b) => {
 		const aValue = toComparableValue(a, sortKey);
 		const bValue = toComparableValue(b, sortKey);
 		const compare = aValue.localeCompare(bValue);
 		return sortDirection === 'asc' ? compare : -compare;
 	});
+
+	$: {
+		const currentRole = teamUsers.find((user) => user.userOid === currentUserOid)?.role;
+		canAssignManagerRoleEffective =
+			currentRole === undefined ? canAssignManagerRole : currentRole === 'Manager';
+	}
+
+	$: {
+		const isUsersListVisible = open && activeSection === 'users' && usersViewMode === 'list';
+		if (isUsersListVisible && !wasUsersListVisible) {
+			void loadTeamUsers();
+		}
+		wasUsersListVisible = isUsersListVisible;
+	}
 
   $: if (!open) {
     resetModalState();
@@ -490,20 +657,34 @@
 												</tr>
 											</thead>
 											<tbody>
-												{#each sortedUsers as user}
+												{#if teamUsersLoading}
 													<tr>
-														<td>{user.name}</td>
-														<td>{user.email}</td>
-														<td>{user.role}</td>
-														<td
-															><button
-																type="button"
-																class="btn"
-																on:click={() => openEditUserView(user)}>Edit</button
-															></td
-														>
+														<td colspan="4">Loading users...</td>
 													</tr>
-												{/each}
+												{:else if teamUsersError}
+													<tr>
+														<td colspan="4">{teamUsersError}</td>
+													</tr>
+												{:else if sortedUsers.length === 0}
+													<tr>
+														<td colspan="4">No users found for this schedule.</td>
+													</tr>
+												{:else}
+													{#each sortedUsers as user}
+														<tr>
+															<td>{user.name}</td>
+															<td>{user.email}</td>
+															<td>{user.role}</td>
+															<td
+																><button
+																	type="button"
+																	class="btn"
+																	on:click={() => openEditUserView(user)}>Edit</button
+																></td
+															>
+														</tr>
+													{/each}
+												{/if}
 											</tbody>
 										</table>
 									</div>
@@ -512,13 +693,14 @@
 								<div class="setupCard">
 									<h4>Add User</h4>
 										<div class="setupGrid">
-											<label>
+											<div>
 												<span class="srOnly">User search</span>
 												<div
 													class="setupUserCombo"
 													role="combobox"
 													aria-expanded={showAddUserResults}
 													bind:this={addUserComboEl}
+													on:mousedown={onAddUserComboMouseDown}
 												>
 													<input
 														class="input"
@@ -527,7 +709,6 @@
 														type="text"
 														value={addUserQuery}
 														on:input={onAddUserQueryInput}
-														on:focus={onAddUserFocus}
 														aria-autocomplete="list"
 														aria-controls="add-user-results"
 													/>
@@ -560,7 +741,7 @@
 														</div>
 													{/if}
 												</div>
-											</label>
+											</div>
 
 										<fieldset class="roleFieldset">
 											<legend>Access Level</legend>
@@ -582,7 +763,7 @@
 												/>
 												Maintainer
 											</label>
-											{#if canAssignManagerRole}
+											{#if canAssignManagerRoleEffective}
 												<label>
 													<input
 														type="radio"
@@ -602,7 +783,12 @@
 											</svg>
 											Cancel
 										</button>
-										<button type="button" class="iconActionBtn primary actionBtn">
+										<button
+											type="button"
+											class="iconActionBtn primary actionBtn"
+											on:click={handleAddUser}
+											disabled={addUserActionLoading}
+										>
 											<svg viewBox="0 0 24 24" aria-hidden="true" class="calendarPlusIcon">
 												<path
 													d="M5 6h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z"
@@ -613,6 +799,9 @@
 											Add
 										</button>
 									</div>
+									{#if addUserActionError}
+										<div class="setupActionAlert" role="alert">{addUserActionError}</div>
+									{/if}
 								</div>
 							{:else if selectedUserForEdit}
 								<div class="setupCard">
@@ -643,17 +832,16 @@
 												/>
 												Maintainer
 											</label>
-											{#if canAssignManagerRole}
-												<label>
-													<input
-														type="radio"
-														name="access-level-edit"
-														value="Manager"
-														bind:group={selectedEditRole}
-													/>
-													Manager
-												</label>
-											{/if}
+											<label>
+												<input
+													type="radio"
+													name="access-level-edit"
+													value="Manager"
+													bind:group={selectedEditRole}
+													disabled={!canAssignManagerRoleEffective}
+												/>
+												Manager
+											</label>
 										</fieldset>
 									</div>
 
@@ -661,7 +849,8 @@
 										<button
 											type="button"
 											class="iconActionBtn danger actionBtn"
-											on:click={resetUsersPane}
+											on:click={handleRemoveUser}
+											disabled={editUserActionLoading}
 										>
 											<svg viewBox="0 0 24 24" aria-hidden="true">
 												<path d="M4 7h16M9 7V5h6v2M9 10v8M15 10v8M7 7l1 13h8l1-13" />
@@ -674,13 +863,21 @@
 											</svg>
 											Cancel
 										</button>
-										<button type="button" class="iconActionBtn primary actionBtn">
+										<button
+											type="button"
+											class="iconActionBtn primary actionBtn"
+											on:click={handleSaveUserEdit}
+											disabled={editUserActionLoading}
+										>
 											<svg viewBox="0 0 24 24" aria-hidden="true">
 												<path d="M4 12l5 5 11-11" />
 											</svg>
 											Save
 										</button>
 									</div>
+									{#if editUserActionError}
+										<div class="setupActionAlert" role="alert">{editUserActionError}</div>
+									{/if}
 								</div>
 							{/if}
 						</section>

@@ -1,0 +1,7 @@
+@media (max-width: 900px) {
+  .monthbar-inner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+}
