@@ -1,0 +1,16 @@
+FROM node:20-bookworm
+WORKDIR /app
+
+COPY docker/certs/*.crt /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+COPY .yarnrc.yml package.json yarn.lock ./
+COPY .yarn/releases/ ./.yarn/releases/
+
+RUN node .yarn/releases/yarn-4.10.3.cjs install --immutable
+
+COPY . .
+
+EXPOSE 5173
+CMD ["node", ".yarn/releases/yarn-4.10.3.cjs", "dev", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
