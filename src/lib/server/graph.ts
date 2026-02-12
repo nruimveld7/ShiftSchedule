@@ -30,9 +30,13 @@ function buildUserSearchFilter(query: string): string {
 	if (terms.length >= 2) {
 		const first = terms[0];
 		const last = terms[terms.length - 1];
+		const firstWithMiddle = terms.slice(0, -1).join(' ');
+		const lastWithMiddle = terms.slice(1).join(' ');
 		clauses.push(
 			`(${startsWithClause('givenName', first)} and ${startsWithClause('surname', last)})`,
-			startsWithClause('displayName', `${last}, ${terms.slice(0, -1).join(' ')}`)
+			`(${startsWithClause('givenName', last)} and ${startsWithClause('surname', first)})`,
+			startsWithClause('displayName', `${last}, ${firstWithMiddle}`),
+			startsWithClause('displayName', `${first}, ${lastWithMiddle}`)
 		);
 	}
 

@@ -24,6 +24,22 @@ type EffectiveRoleRow = {
 	RoleName: ScheduleRole;
 };
 
+type ActiveAssignmentCountRow = {
+	ActiveAssignmentCount: number;
+};
+
+type AnyAssignmentCountRow = {
+	AnyAssignmentCount: number;
+};
+
+type ActiveMembershipCountRow = {
+	ActiveMembershipCount: number;
+};
+
+type ConfirmRemovalPayload = {
+	confirmActiveAssignmentRemoval?: boolean;
+};
+
 function assertRole(role: unknown): ScheduleRole {
 	if (role === 'Member' || role === 'Maintainer' || role === 'Manager') {
 		return role;
@@ -120,6 +136,10 @@ async function countManagers(request: sql.Request, scheduleId: number): Promise<
 		   AND r.RoleName = 'Manager';`
 	);
 	return Number(result.recordset?.[0]?.ManagerCount ?? 0);
+}
+
+function cleanBoolean(value: unknown): boolean {
+	return value === true;
 }
 
 function assertCanManageRoleChanges(actor: ActorContext, currentRole: ScheduleRole | null, nextRole: ScheduleRole) {
@@ -278,6 +298,18 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
 				   VALUES (@scheduleId, @targetUserOid, @roleId, @actorUserOid);`
 			);
 
+		await new sql.Request(tx)
+			.input('scheduleId', ctx.scheduleId)
+			.input('targetUserOid', targetUserOid)
+			.query(
+				`UPDATE dbo.Users
+				 SET DefaultScheduleId = @scheduleId,
+					 UpdatedAt = SYSUTCDATETIME()
+				 WHERE UserOid = @targetUserOid
+				   AND DeletedAt IS NULL
+				   AND DefaultScheduleId IS NULL;`
+			);
+
 		await tx.commit();
 		return json({ ok: true });
 	} catch (e) {
@@ -382,6 +414,9 @@ export const DELETE: RequestHandler = async ({ locals, cookies, request }) => {
 	const { pool, ctx } = await getActorContext(currentUser.id, cookies);
 	const body = await request.json().catch(() => null);
 	const targetUserOid = cleanOptionalText(body?.userOid, 64);
+	const confirmActiveAssignmentRemoval = cleanBoolean(
+		(body as ConfirmRemovalPayload | null)?.confirmActiveAssignmentRemoval
+	);
 	if (!targetUserOid) {
 		throw error(400, 'Target user is required');
 	}
@@ -405,6 +440,54 @@ export const DELETE: RequestHandler = async ({ locals, cookies, request }) => {
 			}
 		}
 
+		const serverDateResult = await new sql.Request(tx).query(
+			`SELECT CONVERT(date, SYSUTCDATETIME()) AS Today;`
+		);
+		const today = String(serverDateResult.recordset?.[0]?.Today ?? '').slice(0, 10);
+		if (!today) {
+			throw error(500, 'Could not resolve current server date');
+		}
+
+		const activeAssignmentResult = await new sql.Request(tx)
+			.input('scheduleId', ctx.scheduleId)
+			.input('targetUserOid', targetUserOid)
+			.input('today', today)
+			.query(
+				`SELECT COUNT(*) AS ActiveAssignmentCount
+				 FROM dbo.ScheduleUserTypes sut
+				 WHERE sut.ScheduleId = @scheduleId
+				   AND sut.UserOid = @targetUserOid
+				   AND sut.IsActive = 1
+				   AND sut.DeletedAt IS NULL
+				   AND sut.StartDate <= @today
+				   AND (sut.EndDate IS NULL OR sut.EndDate >= @today);`
+			);
+		const activeAssignmentCount = Number(
+			(activeAssignmentResult.recordset?.[0] as ActiveAssignmentCountRow | undefined)
+				?.ActiveAssignmentCount ?? 0
+		);
+
+		if (activeAssignmentCount > 0 && !confirmActiveAssignmentRemoval) {
+			throw error(409, {
+				code: 'USER_ACTIVE_ASSIGNMENTS',
+				message:
+					'This user is currently assigned to one or more shifts. Confirm removal to end active assignment(s) effective today.',
+				activeAssignmentCount
+			});
+		}
+
+		const anyAssignmentResult = await new sql.Request(tx)
+			.input('targetUserOid', targetUserOid)
+			.query(
+				`SELECT COUNT(*) AS AnyAssignmentCount
+				 FROM dbo.ScheduleUserTypes sut
+				 WHERE sut.UserOid = @targetUserOid;`
+			);
+		const anyAssignmentCount = Number(
+			(anyAssignmentResult.recordset?.[0] as AnyAssignmentCountRow | undefined)?.AnyAssignmentCount ?? 0
+		);
+		const hasEverAssignment = anyAssignmentCount > 0;
+
 		await new sql.Request(tx)
 			.input('scheduleId', ctx.scheduleId)
 			.input('targetUserOid', targetUserOid)
@@ -420,8 +503,94 @@ export const DELETE: RequestHandler = async ({ locals, cookies, request }) => {
 				   AND DeletedAt IS NULL;`
 			);
 
+		if (activeAssignmentCount > 0) {
+			await new sql.Request(tx)
+				.input('scheduleId', ctx.scheduleId)
+				.input('targetUserOid', targetUserOid)
+				.input('today', today)
+				.input('actorUserOid', ctx.userOid)
+				.query(
+					`UPDATE dbo.ScheduleUserTypes
+					 SET EndDate = CASE
+						 WHEN EndDate IS NULL OR EndDate > @today THEN @today
+						 ELSE EndDate
+					 END,
+					 EndedAt = SYSUTCDATETIME(),
+					 EndedBy = @actorUserOid
+					 WHERE ScheduleId = @scheduleId
+					   AND UserOid = @targetUserOid
+					   AND IsActive = 1
+					   AND DeletedAt IS NULL
+					   AND StartDate <= @today
+					   AND (EndDate IS NULL OR EndDate >= @today);`
+				);
+
+			await new sql.Request(tx)
+				.input('scheduleId', ctx.scheduleId)
+				.input('targetUserOid', targetUserOid)
+				.input('today', today)
+				.input('actorUserOid', ctx.userOid)
+				.query(
+					`UPDATE dbo.ScheduleUserTypes
+					 SET IsActive = 0,
+					 	 DeletedAt = SYSUTCDATETIME(),
+					 	 DeletedBy = @actorUserOid
+					 WHERE ScheduleId = @scheduleId
+					   AND UserOid = @targetUserOid
+					   AND IsActive = 1
+					   AND DeletedAt IS NULL
+					   AND StartDate > @today;`
+				);
+		}
+
+		const activeMembershipResult = await new sql.Request(tx)
+			.input('targetUserOid', targetUserOid)
+			.query(
+				`SELECT COUNT(*) AS ActiveMembershipCount
+				 FROM dbo.ScheduleUsers su
+				 WHERE su.UserOid = @targetUserOid
+				   AND su.IsActive = 1
+				   AND su.DeletedAt IS NULL;`
+			);
+		const activeMembershipCount = Number(
+			(activeMembershipResult.recordset?.[0] as ActiveMembershipCountRow | undefined)
+				?.ActiveMembershipCount ?? 0
+		);
+
+		let removalMode: 'hard_deleted' | 'soft_deactivated' | 'schedule_removed_only' =
+			'schedule_removed_only';
+
+		if (!hasEverAssignment && activeMembershipCount === 0) {
+			await new sql.Request(tx)
+				.input('targetUserOid', targetUserOid)
+				.query(
+					`DELETE FROM dbo.ScheduleEvents WHERE UserOid = @targetUserOid;
+					 DELETE FROM dbo.BootstrapManagers WHERE UserOid = @targetUserOid;
+					 DELETE FROM dbo.ScheduleUsers WHERE UserOid = @targetUserOid;
+					 DELETE FROM dbo.Users WHERE UserOid = @targetUserOid;`
+				);
+			removalMode = 'hard_deleted';
+		} else if (activeMembershipCount === 0) {
+			await new sql.Request(tx)
+				.input('targetUserOid', targetUserOid)
+				.input('actorUserOid', ctx.userOid)
+				.query(
+					`UPDATE dbo.Users
+					 SET IsActive = 0,
+					 	 DeletedAt = SYSUTCDATETIME(),
+					 	 DeletedBy = @actorUserOid,
+					 	 UpdatedAt = SYSUTCDATETIME()
+					 WHERE UserOid = @targetUserOid;`
+				);
+			removalMode = 'soft_deactivated';
+		}
+
 		await tx.commit();
-		return json({ ok: true });
+		return json({
+			ok: true,
+			removalMode,
+			endedActiveAssignments: activeAssignmentCount > 0
+		});
 	} catch (e) {
 		await tx.rollback();
 		throw e;

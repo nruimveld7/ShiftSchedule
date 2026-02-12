@@ -1,45 +1,138 @@
 <script lang="ts">
   import type { MonthDay } from '$lib/utils/date';
-  import { indicatorFor, statusForEmployeeDay } from '$lib/utils/status';
-  import type { Employee, Status } from '$lib/data/demoData';
+  import { indicatorFor } from '$lib/utils/status';
+  import type { Employee, ScheduleEvent, Status } from '$lib/data/demoData';
+  import { resolveCellEventVisuals } from '$lib/utils/scheduleEvents';
 
   export let employee: Employee;
+  export let groupName = '';
+  export let employeeTypeId: number | null = null;
+  export let events: ScheduleEvent[] = [];
+  export let selectedYear = new Date().getFullYear();
+  export let selectedMonthIndex = new Date().getMonth();
+  export let rowKey = '';
+  export let selectedRowKey: string | null = null;
+  export let onSelectRow: (rowKey: string) => void = () => {};
+  export let onOpenDisplayNameEditor: (employee: Employee) => void = () => {};
   export let monthDays: MonthDay[] = [];
   export let overrides: Record<string, { day: number; status: Status }[]>;
+  export let selectedDay: number | null = null;
+  export let selectedGroupIndex: number | null = null;
+  export let groupIndex = -1;
+  export let isLastVisibleRow = false;
+  export let isLastInGroup = false;
+  export let onDoubleClickDayCell: (employee: Employee, day: MonthDay) => void = () => {};
+
+  $: overrideByDay = new Map(
+    (overrides[employee.name] ?? []).map((item) => [item.day, item.status] as const)
+  );
 
   $: rowData = monthDays.map((day) => {
-    const status = statusForEmployeeDay(employee, day.day, day.dow, overrides);
-    return { day, status, indicator: indicatorFor(status) };
+    const eventStatus = overrideByDay.get(day.day) ?? null;
+    const dayColor = employee.dayColors?.[day.day] ?? null;
+    const month = String(selectedMonthIndex + 1).padStart(2, '0');
+    const dayPart = String(day.day).padStart(2, '0');
+    const dayIso = `${selectedYear}-${month}-${dayPart}`;
+    const eventVisuals = resolveCellEventVisuals(events, dayIso, {
+      scopeType: 'user',
+      employeeTypeId,
+      userOid: employee.userOid ?? null
+    });
+    return {
+      day,
+      status: eventStatus,
+      indicator: eventStatus ? indicatorFor(eventStatus) : null,
+      dayColor,
+      eventVisuals
+    };
   });
 
   function dayClass(day: MonthDay) {
-    return `cell center${day.isWeekend ? ' wknd' : ''}`;
+    return `cell center employeeRowCell${day.isWeekend ? ' wknd' : ''}`;
+  }
+
+  $: isRowSelected = selectedRowKey === rowKey;
+
+  function handleRowSelect() {
+    onSelectRow(rowKey);
+  }
+
+  function handleRowDoubleClick() {
+    onOpenDisplayNameEditor(employee);
   }
 </script>
 
-<div class="cell namecol" role="rowheader">
+<div
+  class={`cell namecol selectableRowCell employeeRowCell${isRowSelected ? ' rowSelected rowStart' : ''}`}
+  role="button"
+  tabindex="0"
+  aria-pressed={isRowSelected}
+  aria-label={`Select row for ${employee.name}`}
+  on:click={handleRowSelect}
+  on:dblclick={handleRowDoubleClick}
+  on:keydown={(event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      handleRowSelect();
+    }
+  }}
+>
   <div class="person">
     <div class="n">{employee.name}</div>
   </div>
 </div>
 
-{#each rowData as cell}
-  <div class={dayClass(cell.day)} role="gridcell">
-    {#if cell.indicator.txt}
+{#each rowData as cell, cellIndex}
+  <div
+    class={`${dayClass(cell.day)}${cell.dayColor ? ' patternCell' : ''}${isRowSelected ? ` rowSelected${cellIndex === rowData.length - 1 ? ' rowEnd' : ''}` : ''}`}
+    data-scope="employee-day"
+    data-group-index={groupIndex}
+    data-day={cell.day.day}
+    data-group-end={isLastInGroup ? 'true' : undefined}
+    role="gridcell"
+    tabindex="-1"
+    style={cell.dayColor ? `--pattern-cell-bg:${cell.dayColor};` : undefined}
+    on:dblclick={() => onDoubleClickDayCell(employee, cell.day)}
+  >
+    {#if cell.eventVisuals.overrideBackground}
+      <div
+        class="cellShiftOverrideBg"
+        style={`--event-shift-override-bg:${cell.eventVisuals.overrideBackground};`}
+        aria-hidden="true"
+      ></div>
+    {/if}
+    {#if cell.eventVisuals.overlayBackground}
+      <div
+        class="cellEventOverlay"
+        style={`--event-overlay-bg:${cell.eventVisuals.overlayBackground};`}
+        aria-hidden="true"
+      ></div>
+    {/if}
+    {#if cell.indicator}
+      {#if cell.indicator.txt}
       <div
         class={`indicator ${cell.indicator.cls}`}
         role="img"
-        aria-label={cell.status}
-        title={cell.status}
+        aria-label={cell.status ?? undefined}
+        title={cell.status ?? undefined}
       >
         <span class={`glyph ${cell.indicator.g ?? ''}`}>{cell.indicator.txt}</span>
       </div>
-    {:else}
+      {:else}
       <div
         class={`indicator ${cell.indicator.cls}`}
         role="img"
-        aria-label={cell.status}
-        title={cell.status}
+        aria-label={cell.status ?? undefined}
+        title={cell.status ?? undefined}
+      >
+      </div>
+      {/if}
+    {/if}
+    {#if cell.eventVisuals.badgeBackground}
+      <div
+        class="cellEventBadge"
+        style={`--event-badge-bg:${cell.eventVisuals.badgeBackground};`}
+        aria-hidden="true"
       ></div>
     {/if}
   </div>

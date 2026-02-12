@@ -279,6 +279,36 @@ async function ensureSessionTable() {
 	`);
 }
 
+async function ensureUsersTableExtensions() {
+	const pool = await GetPool();
+	await pool.request().query(`
+		IF COL_LENGTH('dbo.Users', 'DefaultScheduleId') IS NULL
+		BEGIN
+			ALTER TABLE dbo.Users ADD DefaultScheduleId int NULL;
+		END
+		IF NOT EXISTS (
+			SELECT 1
+			FROM sys.foreign_keys
+			WHERE name = 'FK_Users_DefaultSchedule'
+			  AND parent_object_id = OBJECT_ID('dbo.Users')
+		)
+		AND OBJECT_ID('dbo.Schedules', 'U') IS NOT NULL
+		BEGIN
+			ALTER TABLE dbo.Users WITH CHECK
+			ADD CONSTRAINT FK_Users_DefaultSchedule FOREIGN KEY (DefaultScheduleId) REFERENCES dbo.Schedules(ScheduleId);
+		END
+		IF NOT EXISTS (
+			SELECT 1
+			FROM sys.indexes
+			WHERE name = 'IX_Users_DefaultScheduleId'
+			  AND object_id = OBJECT_ID('dbo.Users')
+		)
+		BEGIN
+			CREATE INDEX IX_Users_DefaultScheduleId ON dbo.Users(DefaultScheduleId);
+		END
+	`);
+}
+
 async function cleanupSessions() {
 	const now = Date.now();
 	if (now - lastSessionCleanupAt < SESSION_CLEANUP_INTERVAL_MS) {
@@ -292,6 +322,7 @@ async function cleanupSessions() {
 }
 
 async function upsertUserProfile(user: Session['user']) {
+	await ensureUsersTableExtensions();
 	const pool = await GetPool();
 	await pool
 		.request()
@@ -305,7 +336,11 @@ async function upsertUserProfile(user: Session['user']) {
 			 ON target.UserOid = source.UserOid
 			 WHEN MATCHED THEN
 			   UPDATE SET FullName = @fullName,
-						  DisplayName = @displayName,
+						  DisplayName = CASE
+							 WHEN NULLIF(LTRIM(RTRIM(target.DisplayName)), '') IS NULL
+							 THEN @displayName
+							 ELSE target.DisplayName
+						  END,
 						  Email = @email,
 						  UpdatedAt = SYSUTCDATETIME()
 			 WHEN NOT MATCHED THEN

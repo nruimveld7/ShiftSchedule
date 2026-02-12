@@ -22,6 +22,13 @@ export const GET: RequestHandler = async ({ url }) => {
 
         SELECT * FROM dbo.Patterns WHERE ScheduleId = @scheduleId AND DeletedAt IS NULL;
         SELECT * FROM dbo.EmployeeTypes WHERE ScheduleId = @scheduleId AND DeletedAt IS NULL ORDER BY DisplayOrder;
+		SELECT * FROM dbo.EmployeeTypeVersions
+		WHERE ScheduleId = @scheduleId
+		  AND DeletedAt IS NULL
+		  AND IsActive = 1
+		  AND StartDate <= @end
+		  AND (EndDate IS NULL OR EndDate >= @start)
+		ORDER BY EmployeeTypeId, StartDate;
         SELECT * FROM dbo.CoverageCodes WHERE ScheduleId = @scheduleId AND DeletedAt IS NULL ORDER BY SortOrder;
 
         SELECT * FROM dbo.ScheduleUsers WHERE ScheduleId = @scheduleId AND DeletedAt IS NULL;
@@ -44,6 +51,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		schedules,
 		patterns,
 		employeeTypes,
+		employeeTypeVersions,
 		coverageCodes,
 		scheduleUsers,
 		scheduleUserTypes,
@@ -54,6 +62,7 @@ export const GET: RequestHandler = async ({ url }) => {
 		schedule: schedules?.[0] ?? null,
 		patterns,
 		employeeTypes,
+		employeeTypeVersions,
 		coverageCodes,
 		scheduleUsers,
 		scheduleUserTypes,

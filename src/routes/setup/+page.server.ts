@@ -58,6 +58,12 @@ export const actions: Actions = {
 			INSERT INTO dbo.ScheduleUsers (ScheduleId, UserOid, RoleId, GrantedBy)
 			VALUES (@ScheduleId, @userOid, @ManagerRoleId, @userOid);
 
+			UPDATE dbo.Users
+			SET DefaultScheduleId = CASE WHEN DefaultScheduleId IS NULL THEN @ScheduleId ELSE DefaultScheduleId END,
+				UpdatedAt = SYSUTCDATETIME()
+			WHERE UserOid = @userOid
+			  AND DeletedAt IS NULL;
+
 			SELECT @ScheduleId AS ScheduleId;
 		`);
 

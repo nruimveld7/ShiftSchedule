@@ -61,7 +61,11 @@ body {
 
   /* Neutral steel base (no blue wash) + SDI red energy */
   background:
-    radial-gradient(1100px 520px at 50% -10%, rgba(200, 16, 46, .26), transparent 60%),
+    radial-gradient(
+      1100px 520px at 50% -10%,
+      color-mix(in srgb, var(--accent) 26%, transparent),
+      transparent 60%
+    ),
     radial-gradient(900px 500px at 12% 12%, rgba(255, 255, 255, .06), transparent 62%),
     radial-gradient(900px 520px at 88% 14%, rgba(255, 255, 255, .05), transparent 62%),
     linear-gradient(180deg, var(--bg-2), var(--bg-0));
@@ -92,7 +96,11 @@ body::before {
 
 :root[data-theme="light"] body {
   background:
-    radial-gradient(1100px 520px at 50% -10%, rgba(200, 16, 46, .18), transparent 60%),
+    radial-gradient(
+      1100px 520px at 50% -10%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 60%
+    ),
     radial-gradient(900px 520px at 12% 14%, rgba(0, 0, 0, .04), transparent 62%),
     radial-gradient(900px 520px at 88% 14%, rgba(0, 0, 0, .03), transparent 62%),
     linear-gradient(180deg, var(--bg-2), var(--bg-0));

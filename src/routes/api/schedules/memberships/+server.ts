@@ -1,6 +1,7 @@
-import type { PageServerLoad } from './$types';
+import { error, json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
 import { GetPool } from '$lib/server/db';
-import { getActiveScheduleId, setActiveScheduleForSession } from '$lib/server/auth';
+import { getActiveScheduleId } from '$lib/server/auth';
 
 type ScheduleRole = 'Member' | 'Maintainer' | 'Manager';
 type ScheduleMembership = {
@@ -12,19 +13,15 @@ type ScheduleMembership = {
 	ThemeJson: string | null;
 };
 
-export const load: PageServerLoad = async ({ locals, cookies }) => {
+export const GET: RequestHandler = async ({ locals, cookies }) => {
 	const user = locals.user;
 	if (!user) {
-		return {
-			schedule: null,
-			userRole: null,
-			scheduleMemberships: [] as ScheduleMembership[],
-			currentUserOid: null
-		};
+		throw error(401, 'Unauthorized');
 	}
 
-	let scheduleId = await getActiveScheduleId(cookies);
+	const activeScheduleId = await getActiveScheduleId(cookies);
 	const pool = await GetPool();
+
 	const defaultResult = await pool
 		.request()
 		.input('userOid', user.id)
@@ -34,9 +31,10 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 			 WHERE UserOid = @userOid
 			   AND DeletedAt IS NULL;`
 		);
+
 	const defaultScheduleId = (defaultResult.recordset?.[0]?.DefaultScheduleId as number | null) ?? null;
 
-	const membershipsResult = await pool
+	const result = await pool
 		.request()
 		.input('userOid', user.id)
 		.input('defaultScheduleId', defaultScheduleId)
@@ -77,33 +75,16 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 			ORDER BY IsDefault DESC, Name;`
 		);
 
-	const scheduleMemberships = (membershipsResult.recordset ?? []) as ScheduleMembership[];
+	const memberships = (result.recordset ?? []) as ScheduleMembership[];
+	const resolvedActiveScheduleId =
+		activeScheduleId !== null &&
+		memberships.some((membership) => membership.ScheduleId === activeScheduleId)
+			? activeScheduleId
+			: (memberships[0]?.ScheduleId ?? null);
 
-	if (scheduleId && !scheduleMemberships.some((membership) => membership.ScheduleId === scheduleId)) {
-		scheduleId = null;
-	}
-
-	if (!scheduleId) {
-		scheduleId = scheduleMemberships[0]?.ScheduleId ?? null;
-		if (scheduleId) {
-			await setActiveScheduleForSession(cookies, scheduleId);
-		}
-	}
-
-	if (!scheduleId) {
-		return {
-			schedule: null,
-			userRole: null,
-			scheduleMemberships,
-			currentUserOid: user.id
-		};
-	}
-	const activeMembership = scheduleMemberships.find((membership) => membership.ScheduleId === scheduleId);
-
-	return {
-		schedule: activeMembership ? { ScheduleId: activeMembership.ScheduleId, Name: activeMembership.Name } : null,
-		userRole: activeMembership?.RoleName ?? null,
-		scheduleMemberships,
-		currentUserOid: user.id
-	};
+	return json({
+		activeScheduleId: resolvedActiveScheduleId,
+		defaultScheduleId,
+		memberships
+	});
 };

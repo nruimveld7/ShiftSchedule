@@ -42,8 +42,17 @@ export async function getAccessState(userOid: string): Promise<AccessState> {
 				END
 
 				IF EXISTS (
-					SELECT 1 FROM dbo.ScheduleUsers
-					WHERE UserOid = @userOid AND DeletedAt IS NULL AND IsActive = 1
+					SELECT 1
+					FROM dbo.ScheduleUsers su
+					INNER JOIN dbo.Schedules s
+						ON s.ScheduleId = su.ScheduleId
+					LEFT JOIN dbo.Roles r
+						ON r.RoleId = su.RoleId
+					WHERE su.UserOid = @userOid
+					  AND su.DeletedAt IS NULL
+					  AND su.IsActive = 1
+					  AND s.DeletedAt IS NULL
+					  AND (s.IsActive = 1 OR r.RoleName = 'Manager')
 				)
 				BEGIN
 					SET @hasScheduleAccess = 1;
