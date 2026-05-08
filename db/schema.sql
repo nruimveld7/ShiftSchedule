@@ -49,6 +49,12 @@ BEGIN
     ADD EntraLastName nvarchar(100) NULL;
 END;
 
+IF COL_LENGTH('dbo.Users', 'MinigamePersonalBest') IS NULL
+BEGIN
+    ALTER TABLE dbo.Users
+    ADD MinigamePersonalBest int NOT NULL CONSTRAINT DF_Users_MinigamePersonalBest DEFAULT 0;
+END;
+
 IF OBJECT_ID('dbo.DF_Users_OnboardingRole', 'D') IS NULL
 BEGIN
     ALTER TABLE dbo.Users
@@ -71,6 +77,15 @@ BEGIN
     EXEC(N'
         ALTER TABLE dbo.Users
         ADD CONSTRAINT CK_Users_OnboardingRole_Valid CHECK (OnboardingRole BETWEEN 0 AND 3);
+    ');
+END;
+
+IF OBJECT_ID('dbo.CK_Users_MinigamePersonalBest_NonNegative', 'C') IS NULL
+BEGIN
+    EXEC(N'
+        ALTER TABLE dbo.Users
+        ADD CONSTRAINT CK_Users_MinigamePersonalBest_NonNegative
+        CHECK (MinigamePersonalBest >= 0);
     ');
 END;
 
@@ -248,6 +263,34 @@ IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'Maintainer')
     INSERT INTO dbo.Roles (RoleName) VALUES ('Maintainer');
 IF NOT EXISTS (SELECT 1 FROM dbo.Roles WHERE RoleName = 'Manager')
     INSERT INTO dbo.Roles (RoleName) VALUES ('Manager');
+
+IF OBJECT_ID('dbo.MinigameLeaderboard', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.MinigameLeaderboard (
+        LeaderboardEntryId bigint IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        DisplayName nvarchar(200) NOT NULL,
+        Score int NOT NULL,
+        IsActive bit NOT NULL CONSTRAINT DF_MinigameLeaderboard_IsActive DEFAULT 1,
+        CreatedAt datetime2 NOT NULL CONSTRAINT DF_MinigameLeaderboard_CreatedAt DEFAULT sysutcdatetime(),
+        CreatedBy nvarchar(64) NULL,
+        DeletedAt datetime2 NULL,
+        DeletedBy nvarchar(64) NULL,
+        CONSTRAINT CK_MinigameLeaderboard_Score_NonNegative CHECK (Score >= 0)
+    );
+END;
+
+IF NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = 'IX_MinigameLeaderboard_Score_CreatedAt'
+      AND object_id = OBJECT_ID('dbo.MinigameLeaderboard')
+)
+BEGIN
+    CREATE INDEX IX_MinigameLeaderboard_Score_CreatedAt
+    ON dbo.MinigameLeaderboard(Score DESC, CreatedAt ASC)
+    INCLUDE (DisplayName)
+    WHERE IsActive = 1 AND DeletedAt IS NULL;
+END;
 
 IF OBJECT_ID('dbo.Patterns', 'U') IS NULL
 BEGIN

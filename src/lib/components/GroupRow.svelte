@@ -21,7 +21,9 @@
 	export let isLastVisibleRow = false;
 	export let mergeFirstTwoColumns = false;
 	export let onSelectDay: (day: number) => void = () => {};
+	export let onCtrlToggleDay: (day: number, event: MouseEvent) => void = () => {};
 	export let onDoubleClickDay: (day: MonthDay) => void = () => {};
+	export let onDayCellContextMenu: (day: MonthDay, event: MouseEvent) => void = () => {};
 	export let onShiftCellContextMenu: (event?: MouseEvent) => void = () => {};
 	export let onHoverShiftCell: (pointer: { clientX: number; clientY: number }) => void = () => {};
 	export let onLeaveShiftCell: () => void = () => {};
@@ -32,6 +34,7 @@
 	) => void = () => {};
 	export let onLeaveDayCell: () => void = () => {};
 	export let onToggle: () => void = () => {};
+	export let ctrlMultiSelectedKeys = new Set<string>();
 	$: normalizedGroupWords = groupName
 		.trim()
 		.split(/\s+/)
@@ -122,18 +125,27 @@
 	{@const visuals = dayEventVisuals.get(day.day)}
 	{@const hasHoverEvents = dayHasHoverEvents.get(day.day) ?? false}
 	{@const isCellSelected = selectedCellKey === `collapsed-shift-day:${groupIndex}:${day.day}`}
+	{@const isCtrlMultiSelected = ctrlMultiSelectedKeys.has(`collapsed-shift-day:${groupIndex}:${day.day}`)}
 	<div
-		class={`${dayClass(day)}${isCellSelected ? ' cellSelected' : ''}${isRowSelected ? ` rowSelected${day.day === monthDays[monthDays.length - 1]?.day ? ' rowEnd' : ''}` : ''}`}
+		class={`${dayClass(day)}${isCellSelected ? ' cellSelected' : ''}${isCtrlMultiSelected ? ' multiCellSelected' : ''}${isRowSelected ? ` rowSelected${day.day === monthDays[monthDays.length - 1]?.day ? ' rowEnd' : ''}` : ''}`}
 		data-scope="shift-day"
 		data-group-index={groupIndex}
 		data-day={day.day}
+		data-cell-key={`collapsed-shift-day:${groupIndex}:${day.day}`}
+		data-ctrl-target="true"
 		role="button"
 		tabindex="0"
 		aria-label={`Select ${normalizedGroupName} on day ${day.day}`}
-		on:click={() => handleDayCellClick(day.day)}
+		on:click={(event) => {
+			if (event.ctrlKey) {
+				onCtrlToggleDay(day.day, event);
+				return;
+			}
+			handleDayCellClick(day.day);
+		}}
 		on:contextmenu={(event) => {
 			event.preventDefault();
-			onDoubleClickDay(day);
+			onDayCellContextMenu(day, event);
 		}}
 		use:longPress={{ onLongPress: () => onDoubleClickDay(day) }}
 		on:keydown={(event) => {

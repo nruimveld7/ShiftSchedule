@@ -68,6 +68,13 @@
 		scopeShiftId: number | null;
 		scopeUserOid: string | null;
 	};
+	type MultiSelectCellScope = {
+		key: string;
+		dayIso: string;
+		scopeType: EventScopeType;
+		scopeShiftId: number | null;
+		scopeUserOid: string | null;
+	};
 	type PickerOption = { value: number | string; label: string; color?: string };
 	type ScheduleRefreshHint = {
 		invalidateCalendarDayDetails?: boolean;
@@ -125,6 +132,14 @@
 	let selectedDay: number | null = null;
 	let selectedGroupIndex: number | null = null;
 	let selectedCellKey: string | null = null;
+	let ctrlMultiSelectedCellKeys = new Set<string>();
+	let ctrlMultiSelectedScopes = new Map<string, MultiSelectCellScope>();
+	let memberEventsPopupIsCustomGroup = false;
+	let customGroupEventTargetsByCommonKey = new Map<
+		string,
+		Array<{ scope: MultiSelectCellScope; eventId: number; versionStamp: string }>
+	>();
+	let customGroupEditingEventCommonKey: string | null = null;
 	let shiftPropagatedBadgeSizeByGroupIndex = new Map<number, number>();
 	let userBadgeSizeByGroupIndex = new Map<number, number>();
 	let lastSelectionContextKey = `${selectedYear}-${selectedMonthIndex}`;
@@ -169,6 +184,8 @@
 	let addEventComments = '';
 	let addEventStartDate = '';
 	let addEventEndDate = '';
+	let addEventDurationAmount = 1;
+	let addEventDurationUnit: 'days' | 'weeks' | 'months' | 'years' = 'days';
 	let addCustomEventCode = '';
 	let addCustomEventName = '';
 	let addCustomEventDisplayMode: EventDisplayMode = 'Schedule Overlay';
@@ -211,6 +228,8 @@
 		{ value: 'Shift Override', label: 'Shift Override' }
 	];
 	const reminderAmountOptions = Array.from({ length: 31 }, (_, index) => index);
+	const eventDurationAmountOptions = Array.from({ length: 30 }, (_, index) => index + 1);
+	const eventDurationUnitOptions = ['days', 'weeks', 'months', 'years'] as const;
 	const reminderHourOptions = Array.from({ length: 13 }, (_, index) => index);
 	const reminderUnitOptions = ['days', 'weeks', 'months'];
 	const reminderMeridiemOptions = ['AM', 'PM'];
@@ -344,6 +363,67 @@
 		return `${formatIsoDate(startDateIso)} to ${formatIsoDate(endDateIso)}`;
 	}
 
+	function inferEventDuration(
+		startDateIso: string,
+		endDateIso: string
+	): { amount: number; unit: 'days' | 'weeks' | 'months' | 'years' } | null {
+		if (!isIsoDate(startDateIso) || !isIsoDate(endDateIso)) return null;
+		if (endDateIso < startDateIso) return null;
+		const units: Array<'years' | 'months' | 'weeks' | 'days'> = ['years', 'months', 'weeks', 'days'];
+		for (const unit of units) {
+			for (let amount = 1; amount <= 30; amount += 1) {
+				const candidateEnd = addDurationInclusiveToIso(startDateIso, amount, unit);
+				if (candidateEnd === endDateIso) {
+					return { amount, unit };
+				}
+			}
+		}
+		return null;
+	}
+
+	function formatEventDurationLabel(startDateIso: string, endDateIso: string): string {
+		const duration = inferEventDuration(startDateIso, endDateIso);
+		if (!duration) return 'Duration unavailable';
+		const unitLabel =
+			duration.amount === 1
+				? duration.unit.slice(0, -1)
+				: duration.unit;
+		return `${duration.amount} ${unitLabel}`;
+	}
+
+	function addDurationInclusiveToIso(
+		startIso: string,
+		amount: number,
+		unit: 'days' | 'weeks' | 'months' | 'years'
+	): string {
+		if (!isIsoDate(startIso)) return startIso;
+		const [yearRaw, monthRaw, dayRaw] = startIso.split('-');
+		const year = Number(yearRaw);
+		const month = Number(monthRaw);
+		const day = Number(dayRaw);
+		const startDate = new Date(year, month - 1, day, 12, 0, 0, 0);
+		const safeAmount = Math.max(1, Math.min(30, Math.floor(amount)));
+		const endDate = new Date(startDate);
+		if (unit === 'days') {
+			endDate.setDate(endDate.getDate() + (safeAmount - 1));
+		} else if (unit === 'weeks') {
+			endDate.setDate(endDate.getDate() + safeAmount * 7 - 1);
+		} else if (unit === 'months') {
+			endDate.setMonth(endDate.getMonth() + safeAmount);
+			endDate.setDate(endDate.getDate() - 1);
+		} else {
+			endDate.setFullYear(endDate.getFullYear() + safeAmount);
+			endDate.setDate(endDate.getDate() - 1);
+		}
+		return toIsoDate(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
+	}
+
+	function isCustomGroupMultiDateSelection(): boolean {
+		if (!memberEventsPopupIsCustomGroup) return false;
+		const uniqueDays = new Set(Array.from(ctrlMultiSelectedScopes.values()).map((scope) => scope.dayIso));
+		return uniqueDays.size > 1;
+	}
+
 	function shiftHasMonthEvents(group: Group): boolean {
 		const shiftId = group.employeeTypeId ?? null;
 		if (!shiftId) return false;
@@ -426,6 +506,7 @@
 		memberEventsPopupScopeType = scopeType;
 		memberEventsPopupScopeShiftId = scopeShiftId;
 		memberEventsPopupScopeUserOid = scopeUserOid;
+		memberEventsPopupIsCustomGroup = false;
 		memberEventsPopupMode = 'list';
 		memberEventsError = '';
 		resetAddEventForm();
@@ -446,6 +527,7 @@
 		memberEventsPopupScopeType = 'shift';
 		memberEventsPopupScopeShiftId = group.employeeTypeId ?? null;
 		memberEventsPopupScopeUserOid = null;
+		memberEventsPopupIsCustomGroup = false;
 		memberEventsPopupMode = 'list';
 		memberEventsError = '';
 		resetAddEventForm();
@@ -466,6 +548,33 @@
 		showMemberEventsModalScrollbar = false;
 		memberEventsThumbHeightPx = 0;
 		memberEventsThumbTopPx = 0;
+		memberEventsPopupIsCustomGroup = false;
+		customGroupEventTargetsByCommonKey = new Map();
+		customGroupEditingEventCommonKey = null;
+	}
+
+	function scopedEventCommonKey(eventRow: ScopedEventEntry): string {
+		const duration = inferEventDuration(eventRow.startDate, eventRow.endDate);
+		return [
+			eventRow.eventCodeName.trim().toLowerCase(),
+			eventRow.eventDisplayMode,
+			eventRow.eventCodeColor,
+			duration ? `${duration.amount}:${duration.unit}` : '',
+			eventRow.comments.trim()
+		].join('|');
+	}
+
+	function eventMatchesExactScope(eventRow: ScopedEventEntry, scope: MultiSelectCellScope): boolean {
+		if (eventRow.scopeType !== scope.scopeType) return false;
+		if (scope.scopeType === 'global') {
+			return true;
+		}
+		if (scope.scopeType === 'shift') {
+			return eventRow.employeeTypeId === scope.scopeShiftId;
+		}
+		const eventUserOid = eventRow.scopeUserOid?.trim().toLowerCase() ?? '';
+		const scopeUserOid = scope.scopeUserOid?.trim().toLowerCase() ?? '';
+		return eventRow.employeeTypeId === scope.scopeShiftId && eventUserOid === scopeUserOid;
 	}
 
 	function eventsCacheKey(
@@ -555,6 +664,74 @@
 	}
 
 	async function loadScopedEvents() {
+		if (memberEventsPopupIsCustomGroup) {
+			memberEventsLoading = true;
+			memberEventsError = '';
+			try {
+				const selectedScopes = Array.from(ctrlMultiSelectedScopes.values());
+				if (selectedScopes.length === 0) {
+					scopedEventEntries = [];
+					return;
+				}
+				const scopedLists = await Promise.all(
+					selectedScopes.map((scope) =>
+						fetchScopedEvents(
+							{ dayIso: scope.dayIso },
+							scope.scopeType,
+							scope.scopeShiftId,
+							scope.scopeUserOid
+						)
+					)
+				);
+				if (scopedLists.length === 0) {
+					scopedEventEntries = [];
+					return;
+				}
+				const exactScopedLists = scopedLists.map((entries, index) =>
+					entries.filter((entry) => eventMatchesExactScope(entry, selectedScopes[index]))
+				);
+				const commonKeys = new Set(exactScopedLists[0].map((entry) => scopedEventCommonKey(entry)));
+				for (let i = 1; i < exactScopedLists.length; i += 1) {
+					const nextKeys = new Set(exactScopedLists[i].map((entry) => scopedEventCommonKey(entry)));
+					for (const key of Array.from(commonKeys)) {
+						if (!nextKeys.has(key)) {
+							commonKeys.delete(key);
+						}
+					}
+				}
+				const nextTargetsByKey = new Map<
+					string,
+					Array<{ scope: MultiSelectCellScope; eventId: number; versionStamp: string }>
+				>();
+				for (const key of commonKeys) {
+					const targets: Array<{ scope: MultiSelectCellScope; eventId: number; versionStamp: string }> = [];
+					for (let i = 0; i < selectedScopes.length; i += 1) {
+						const scope = selectedScopes[i];
+						const match = exactScopedLists[i].find((entry) => scopedEventCommonKey(entry) === key);
+						if (!match?.versionStamp) continue;
+						targets.push({
+							scope,
+							eventId: match.eventId,
+							versionStamp: match.versionStamp
+						});
+					}
+					if (targets.length > 0) {
+						nextTargetsByKey.set(key, targets);
+					}
+				}
+				customGroupEventTargetsByCommonKey = nextTargetsByKey;
+				scopedEventEntries = exactScopedLists[0].filter((entry) =>
+					commonKeys.has(scopedEventCommonKey(entry))
+				);
+			} catch (error) {
+				scopedEventEntries = [];
+				memberEventsError = error instanceof Error ? error.message : 'Failed to load events';
+			} finally {
+				memberEventsLoading = false;
+			}
+			return;
+		}
+
 		if (!memberEventsPopupStartIso || !memberEventsPopupEndIso) return;
 		if (memberEventsPopupScopeType === 'shift' && !memberEventsPopupScopeShiftId) {
 			memberEventsError = 'This shift cannot be resolved for event lookups.';
@@ -787,6 +964,8 @@
 			memberEventsPopupWindowMode === 'shift-month' && memberEventsPopupScopeType === 'shift';
 		addEventStartDate = shouldDefaultShiftMonthStart ? firstOfMonthIso : memberEventsPopupDayIso;
 		addEventEndDate = shouldDefaultShiftMonthStart ? firstOfMonthIso : memberEventsPopupDayIso;
+		addEventDurationAmount = 1;
+		addEventDurationUnit = 'days';
 		addCustomEventCode = '';
 		addCustomEventName = '';
 		addCustomEventDisplayMode = 'Schedule Overlay';
@@ -892,6 +1071,7 @@
 	async function openAddEventView() {
 		if (!canMaintainTeam) return;
 		memberEventsPopupMode = 'add';
+		customGroupEditingEventCommonKey = null;
 		resetAddEventForm();
 		await loadActiveEventCodes(true);
 	}
@@ -901,12 +1081,23 @@
 		await loadActiveEventCodes(true);
 
 		memberEventsPopupMode = 'edit';
+		customGroupEditingEventCommonKey = memberEventsPopupIsCustomGroup
+			? scopedEventCommonKey(eventRow)
+			: null;
 		addEventError = '';
 		editingEventId = eventRow.eventId;
 		editingEventVersionStamp = eventRow.versionStamp ?? '';
 		addEventComments = eventRow.comments;
 		addEventStartDate = eventRow.startDate;
 		addEventEndDate = eventRow.endDate;
+		const inferredDuration = inferEventDuration(eventRow.startDate, eventRow.endDate);
+		if (inferredDuration) {
+			addEventDurationAmount = inferredDuration.amount;
+			addEventDurationUnit = inferredDuration.unit;
+		} else {
+			addEventDurationAmount = 1;
+			addEventDurationUnit = 'days';
+		}
 
 		const matchedEventCode =
 			typeof eventRow.eventCodeId === 'number' && eventRow.eventCodeId > 0
@@ -950,6 +1141,7 @@
 
 	function cancelAddEvent() {
 		memberEventsPopupMode = 'list';
+		customGroupEditingEventCommonKey = null;
 		resetAddEventForm();
 	}
 
@@ -970,22 +1162,32 @@
 		if (eventSaveInProgress) return;
 		addEventError = '';
 
-		if (memberEventsPopupScopeType === 'shift' && !memberEventsPopupScopeShiftId) {
+		if (!memberEventsPopupIsCustomGroup && memberEventsPopupScopeType === 'shift' && !memberEventsPopupScopeShiftId) {
 			addEventError = 'This shift cannot be resolved for event updates.';
 			return;
 		}
-		if (memberEventsPopupScopeType === 'user' && !memberEventsPopupScopeUserOid) {
+		if (!memberEventsPopupIsCustomGroup && memberEventsPopupScopeType === 'user' && !memberEventsPopupScopeUserOid) {
 			addEventError = 'This user cannot be resolved for event updates.';
 			return;
 		}
 
 		const isCustomCode = addEventCodeId === 'custom';
-		if (!isIsoDate(addEventStartDate) || !isIsoDate(addEventEndDate)) {
-			addEventError = 'Please choose a valid start and end date.';
-			return;
-		}
-		if (addEventEndDate < addEventStartDate) {
-			addEventError = 'End date cannot be before start date.';
+		const useDurationSelector = isCustomGroupMultiDateSelection();
+		if (!useDurationSelector) {
+			if (!isIsoDate(addEventStartDate) || !isIsoDate(addEventEndDate)) {
+				addEventError = 'Please choose a valid start and end date.';
+				return;
+			}
+			if (addEventEndDate < addEventStartDate) {
+				addEventError = 'End date cannot be before start date.';
+				return;
+			}
+		} else if (
+			!Number.isInteger(addEventDurationAmount) ||
+			addEventDurationAmount < 1 ||
+			addEventDurationAmount > 30
+		) {
+			addEventError = 'Please choose a valid duration amount between 1 and 30.';
 			return;
 		}
 
@@ -1030,10 +1232,7 @@
 			coverageCodeId = eventCode.eventCodeId;
 		}
 
-		const payload: Record<string, unknown> = {
-			scope: memberEventsPopupScopeType,
-			employeeTypeId: memberEventsPopupScopeShiftId,
-			userOid: memberEventsPopupScopeUserOid,
+		const payloadBase: Record<string, unknown> = {
 			startDate: addEventStartDate,
 			endDate: addEventEndDate,
 			comments: addEventComments.trim(),
@@ -1050,10 +1249,10 @@
 		};
 
 		if (customCode) {
-			payload.customCode = customCode;
-			payload.customName = customName;
-			payload.customDisplayMode = customDisplayMode;
-			payload.customColor = customColor;
+			payloadBase.customCode = customCode;
+			payloadBase.customName = customName;
+			payloadBase.customDisplayMode = customDisplayMode;
+			payloadBase.customColor = customColor;
 		}
 
 		const isEditing = memberEventsPopupMode === 'edit' && editingEventId !== null;
@@ -1063,32 +1262,92 @@
 				addEventError = 'This event can no longer be edited. Refresh and try again.';
 				return;
 			}
-			payload.eventId = editingEventId;
-			payload.expectedVersionStamp = expectedVersionStamp;
+			payloadBase.eventId = editingEventId;
+			payloadBase.expectedVersionStamp = expectedVersionStamp;
 		}
 
 		eventSaveInProgress = true;
 		try {
-			const result = await fetchWithAuthRedirect(
-				`${base}/api/team/events`,
-				{
-					method: isEditing ? 'PATCH' : 'POST',
-					headers: {
-						'content-type': 'application/json',
-						accept: 'application/json'
+			if (memberEventsPopupIsCustomGroup) {
+				const selectedScopes = Array.from(ctrlMultiSelectedScopes.values());
+				const editTargets =
+					isEditing && customGroupEditingEventCommonKey
+						? customGroupEventTargetsByCommonKey.get(customGroupEditingEventCommonKey) ?? []
+						: [];
+				if (isEditing && editTargets.length === 0) {
+					throw new Error('Unable to resolve matching events for this custom group edit.');
+				}
+				const scopesToApply =
+					isEditing && editTargets.length > 0
+						? editTargets.map((target) => target.scope)
+						: selectedScopes;
+				for (const scope of scopesToApply) {
+					const startDateForScope = useDurationSelector ? scope.dayIso : addEventStartDate;
+					const endDateForScope = useDurationSelector
+						? addDurationInclusiveToIso(scope.dayIso, addEventDurationAmount, addEventDurationUnit)
+						: addEventEndDate;
+					const payload: Record<string, unknown> = {
+						...payloadBase,
+						startDate: startDateForScope,
+						endDate: endDateForScope,
+						scope: scope.scopeType,
+						employeeTypeId: scope.scopeShiftId,
+						userOid: scope.scopeUserOid
+					};
+					if (isEditing) {
+						const target = editTargets.find((item) => item.scope.key === scope.key);
+						if (!target) continue;
+						payload.eventId = target.eventId;
+						payload.expectedVersionStamp = target.versionStamp;
+					}
+					const result = await fetchWithAuthRedirect(
+						`${base}/api/team/events`,
+						{
+							method: isEditing ? 'PATCH' : 'POST',
+							headers: {
+								'content-type': 'application/json',
+								accept: 'application/json'
+							},
+							body: JSON.stringify(payload)
+						},
+						base
+					);
+					if (!result) {
+						return;
+					}
+					if (!result.ok) {
+						throw new Error(await parseErrorMessage(result, 'Failed to save event'));
+					}
+				}
+			} else {
+				const payload: Record<string, unknown> = {
+					...payloadBase,
+					scope: memberEventsPopupScopeType,
+					employeeTypeId: memberEventsPopupScopeShiftId,
+					userOid: memberEventsPopupScopeUserOid
+				};
+				const result = await fetchWithAuthRedirect(
+					`${base}/api/team/events`,
+					{
+						method: isEditing ? 'PATCH' : 'POST',
+						headers: {
+							'content-type': 'application/json',
+							accept: 'application/json'
+						},
+						body: JSON.stringify(payload)
 					},
-					body: JSON.stringify(payload)
-				},
-				base
-			);
-			if (!result) {
-				return;
-			}
-			if (!result.ok) {
-				throw new Error(await parseErrorMessage(result, 'Failed to save event'));
+					base
+				);
+				if (!result) {
+					return;
+				}
+				if (!result.ok) {
+					throw new Error(await parseErrorMessage(result, 'Failed to save event'));
+				}
 			}
 
 			memberEventsPopupMode = 'list';
+			customGroupEditingEventCommonKey = null;
 			resetAddEventForm();
 			scopedEventsCache.clear();
 			refreshScheduleInBackground({
@@ -1114,6 +1373,44 @@
 		addEventError = '';
 		eventSaveInProgress = true;
 		try {
+			if (memberEventsPopupIsCustomGroup && customGroupEditingEventCommonKey) {
+				const targets =
+					customGroupEventTargetsByCommonKey.get(customGroupEditingEventCommonKey) ?? [];
+				for (const target of targets) {
+					const result = await fetchWithAuthRedirect(
+						`${base}/api/team/events`,
+						{
+							method: 'DELETE',
+							headers: {
+								'content-type': 'application/json',
+								accept: 'application/json'
+							},
+							body: JSON.stringify({
+								eventId: target.eventId,
+								expectedVersionStamp: target.versionStamp
+							})
+						},
+						base
+					);
+					if (!result) {
+						return;
+					}
+					if (!result.ok) {
+						throw new Error(await parseErrorMessage(result, 'Failed to remove event'));
+					}
+				}
+				memberEventsPopupMode = 'list';
+				customGroupEditingEventCommonKey = null;
+				resetAddEventForm();
+				scopedEventsCache.clear();
+				refreshScheduleInBackground({
+					invalidateCalendarDayDetails: true,
+					startDate: addEventStartDate,
+					endDate: addEventEndDate
+				});
+				await loadScopedEvents();
+				return;
+			}
 			const result = await fetchWithAuthRedirect(
 				`${base}/api/team/events`,
 				{
@@ -1136,6 +1433,7 @@
 				throw new Error(await parseErrorMessage(result, 'Failed to remove event'));
 			}
 			memberEventsPopupMode = 'list';
+			customGroupEditingEventCommonKey = null;
 			resetAddEventForm();
 			scopedEventsCache.clear();
 			refreshScheduleInBackground({
@@ -1155,7 +1453,33 @@
 		void openMemberEventsPopup(day, 'global');
 	}
 
+	function handleDayHeaderContextMenu(day: MonthDay, event: MouseEvent) {
+		event.preventDefault();
+		const key = `header-day:${day.day}`;
+		if (isCtrlMultiSelectionActive() && !event.ctrlKey) {
+			if (ctrlMultiSelectedCellKeys.has(key)) {
+				void openCustomGroupEventsPopup();
+				return;
+			}
+			clearCtrlMultiSelection();
+			return;
+		}
+		handleDayHeaderDoubleClick(day);
+	}
+
 	function handleDayHeaderClick(day: number, event: MouseEvent) {
+		if (event.ctrlKey) {
+			const dayIso = toIsoDate(selectedYear, selectedMonthIndex, day);
+			toggleCtrlMultiSelectionCell({
+				key: `header-day:${day}`,
+				dayIso,
+				scopeType: 'global',
+				scopeShiftId: null,
+				scopeUserOid: null
+			});
+			return;
+		}
+		if (shouldSuppressNonContextAction(event)) return;
 		if (suppressHeaderClickDay === day) {
 			suppressHeaderClickDay = null;
 			return;
@@ -1189,7 +1513,28 @@
 
 	function handleShiftCellContextMenu(event: MouseEvent | undefined, group: Group) {
 		event?.preventDefault();
+		if (event && shouldSuppressNonContextAction(event)) return;
 		void openShiftMonthEventsPopup(group);
+	}
+
+	async function openCustomGroupEventsPopup() {
+		const selectedScopes = Array.from(ctrlMultiSelectedScopes.values());
+		if (selectedScopes.length === 0) return;
+		memberEventsPopupTitle = 'Custom Group Events';
+		memberEventsPopupDayIso = selectedScopes[0].dayIso;
+		memberEventsPopupStartIso = memberEventsPopupDayIso;
+		memberEventsPopupEndIso = memberEventsPopupDayIso;
+		memberEventsPopupWindowMode = 'day';
+		memberEventsPopupScopeType = selectedScopes[0].scopeType;
+		memberEventsPopupScopeShiftId = selectedScopes[0].scopeShiftId;
+		memberEventsPopupScopeUserOid = selectedScopes[0].scopeUserOid;
+		memberEventsPopupIsCustomGroup = true;
+		memberEventsPopupMode = 'list';
+		memberEventsError = '';
+		resetAddEventForm();
+		hideHoverEventsTooltip();
+		memberEventsPopupOpen = true;
+		await loadScopedEvents();
 	}
 
 	function handleEmployeeDayDoubleClick(
@@ -1198,6 +1543,62 @@
 		day: MonthDay
 	) {
 		void openMemberEventsPopup(day, 'user', employee.name, groupShiftId, employee.userOid ?? null);
+	}
+
+	function handleEmployeeDayContextMenu(rowKey: string, day: number, event: MouseEvent) {
+		const key = `day:${rowKey}:${day}`;
+		if (isCtrlMultiSelectionActive() && !event.ctrlKey) {
+			if (ctrlMultiSelectedCellKeys.has(key)) {
+				void openCustomGroupEventsPopup();
+				return;
+			}
+			clearCtrlMultiSelection();
+			return;
+		}
+		const entry = groups
+			.flatMap((group) => group.employees.map((employee) => ({ group, employee })))
+			.find(
+				(item) => makeRowKey(item.group.category, item.employee.userOid ?? item.employee.name) === rowKey
+			);
+		const dayObj = monthDays.find((item) => item.day === day);
+		if (!entry || !dayObj) return;
+		handleEmployeeDayDoubleClick(entry.employee, entry.group.employeeTypeId ?? null, dayObj);
+	}
+
+	function handleCollapsedShiftDayContextMenu(
+		group: Group,
+		groupIndex: number,
+		day: MonthDay,
+		event: MouseEvent
+	) {
+		const key = `collapsed-shift-day:${groupIndex}:${day.day}`;
+		if (isCtrlMultiSelectionActive() && !event.ctrlKey) {
+			if (ctrlMultiSelectedCellKeys.has(key)) {
+				void openCustomGroupEventsPopup();
+				return;
+			}
+			clearCtrlMultiSelection();
+			return;
+		}
+		handleGroupDayDoubleClick(group, day);
+	}
+
+	function handleGridClickCapture(event: MouseEvent) {
+		const target = event.target as HTMLElement | null;
+		if (!target) return;
+		if (event.ctrlKey) {
+			const ctrlTarget = target.closest('[data-ctrl-target="true"]');
+			if (!ctrlTarget) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
+			return;
+		}
+		if (isCtrlMultiSelectionActive()) {
+			clearCtrlMultiSelection();
+			event.preventDefault();
+			event.stopPropagation();
+		}
 	}
 
 	function handleDayHeaderHover(day: MonthDay, pointer: { clientX: number; clientY: number }) {
@@ -1611,6 +2012,10 @@
 	}
 
 	function handleSelectDayCell(rowKey: string, day: number) {
+		if (isCtrlMultiSelectionActive()) {
+			clearCtrlMultiSelection();
+			return;
+		}
 		const key = `day:${rowKey}:${day}`;
 		if (
 			selectedCellKey === key &&
@@ -1643,6 +2048,22 @@
 		selectedCellKey = `header-day:${day}`;
 	}
 
+	function handleCtrlToggleEmployeeDayCell(rowKey: string, day: number, event: MouseEvent) {
+		event.preventDefault();
+		const row = groups.flatMap((group) => group.employees.map((employee) => ({ group, employee }))).find(
+			(entry) => makeRowKey(entry.group.category, entry.employee.userOid ?? entry.employee.name) === rowKey
+		);
+		if (!row?.employee.userOid) return;
+		const dayIso = toIsoDate(selectedYear, selectedMonthIndex, day);
+		toggleCtrlMultiSelectionCell({
+			key: `day:${rowKey}:${day}`,
+			dayIso,
+			scopeType: 'user',
+			scopeShiftId: row.group.employeeTypeId ?? null,
+			scopeUserOid: row.employee.userOid
+		});
+	}
+
 	function handleGroupDaySelect(groupIndex: number, day: number) {
 		if (selectedDay === day && selectedGroupIndex === groupIndex) {
 			selectedDay = null;
@@ -1655,6 +2076,10 @@
 	}
 
 	function handleCollapsedShiftDaySelect(rowKey: string, groupIndex: number, day: number) {
+		if (isCtrlMultiSelectionActive()) {
+			clearCtrlMultiSelection();
+			return;
+		}
 		const key = `collapsed-shift-day:${groupIndex}:${day}`;
 		if (
 			selectedCellKey === key &&
@@ -1671,11 +2096,60 @@
 		selectedCellKey = key;
 	}
 
+	function handleCtrlToggleCollapsedShiftDay(group: Group, groupIndex: number, day: number, event: MouseEvent) {
+		event.preventDefault();
+		const dayIso = toIsoDate(selectedYear, selectedMonthIndex, day);
+		toggleCtrlMultiSelectionCell({
+			key: `collapsed-shift-day:${groupIndex}:${day}`,
+			dayIso,
+			scopeType: 'shift',
+			scopeShiftId: group.employeeTypeId ?? null,
+			scopeUserOid: null
+		});
+	}
+
 	function clearSelectionState() {
 		selectedRowKey = null;
 		selectedDay = null;
 		selectedGroupIndex = null;
 		selectedCellKey = null;
+	}
+
+	function clearCtrlMultiSelection() {
+		ctrlMultiSelectedCellKeys = new Set<string>();
+		ctrlMultiSelectedScopes = new Map<string, MultiSelectCellScope>();
+	}
+
+	function isCtrlMultiSelectionActive(): boolean {
+		return ctrlMultiSelectedCellKeys.size > 0;
+	}
+
+	function toggleCtrlMultiSelectionCell(scope: MultiSelectCellScope) {
+		clearSelectionState();
+		const nextKeys = new Set(ctrlMultiSelectedCellKeys);
+		const nextScopes = new Map(ctrlMultiSelectedScopes);
+		if (nextKeys.has(scope.key)) {
+			nextKeys.delete(scope.key);
+			nextScopes.delete(scope.key);
+		} else {
+			nextKeys.add(scope.key);
+			nextScopes.set(scope.key, scope);
+		}
+		ctrlMultiSelectedCellKeys = nextKeys;
+		ctrlMultiSelectedScopes = nextScopes;
+	}
+
+	function shouldSuppressNonContextAction(event: MouseEvent): boolean {
+		if (!isCtrlMultiSelectionActive()) return false;
+		if (event.ctrlKey) return false;
+		const target = event.currentTarget as HTMLElement | null;
+		const key = target?.dataset?.cellKey ?? '';
+		const isRightClick = event.button === 2;
+		if (isRightClick && key && ctrlMultiSelectedCellKeys.has(key)) {
+			return false;
+		}
+		clearCtrlMultiSelection();
+		return true;
 	}
 
 	function clamp(value: number, min: number, max: number): number {
@@ -2375,6 +2849,7 @@
 			lastPopupResetToken = popupResetToken;
 			closeMemberEventsPopup();
 			hideHoverEventsTooltip();
+			clearCtrlMultiSelection();
 		}
 	}
 
@@ -2383,6 +2858,7 @@
 		if (nextSelectionContextKey !== lastSelectionContextKey) {
 			lastSelectionContextKey = nextSelectionContextKey;
 			clearSelectionState();
+			clearCtrlMultiSelection();
 			hideHoverEventsTooltip();
 		}
 	}
@@ -2412,6 +2888,7 @@
 			aria-label="Shift schedule grid"
 			style={gridStyle}
 			bind:this={gridEl}
+			on:click|capture={handleGridClickCapture}
 		>
 			{#if activeTodayDay}
 				<!-- div class="today-band" bind:this={bandEl}><!/div-->
@@ -2475,8 +2952,10 @@
 			{#each days as day (day.day)}
 				{@const headerVisuals = dayHeaderEventVisuals.get(day.day)}
 				<div
-					class={`${dayHeaderClass(day)} selectableColumnHeader${selectedDay === day.day && selectedGroupIndex === null ? ' columnSelected colStart' : ''}${selectedCellKey === `header-day:${day.day}` ? ' cellSelected' : ''}`}
+					class={`${dayHeaderClass(day)} selectableColumnHeader${selectedDay === day.day && selectedGroupIndex === null ? ' columnSelected colStart' : ''}${selectedCellKey === `header-day:${day.day}` ? ' cellSelected' : ''}${ctrlMultiSelectedCellKeys.has(`header-day:${day.day}`) ? ' multiCellSelected' : ''}`}
 					data-day={day.day}
+					data-cell-key={`header-day:${day.day}`}
+					data-ctrl-target="true"
 					role="columnheader"
 					aria-label={dayAriaLabel(day)}
 					tabindex="0"
@@ -2487,10 +2966,7 @@
 							handleDaySelect(day.day);
 						}
 					}}
-					on:contextmenu={(event) => {
-						event.preventDefault();
-						handleDayHeaderDoubleClick(day);
-					}}
+					on:contextmenu={(event) => handleDayHeaderContextMenu(day, event)}
 					use:longPress={{ onLongPress: () => handleDayHeaderDoubleClick(day) }}
 					on:touchend={(event) => handleDayHeaderTouchEnd(day, event)}
 					on:mouseenter={(event) =>
@@ -2554,13 +3030,18 @@
 						mergeFirstTwoColumns={true}
 						isLastVisibleRow={groupIndex === groups.length - 1}
 						onSelectDay={(day) => handleSelectDayCell(collapsedRowKey, day)}
+						onCtrlToggleDay={(day, event) =>
+							handleCtrlToggleCollapsedShiftDay(group, groupIndex, day, event)}
 						onDoubleClickDay={(day) => handleGroupDayDoubleClick(group, day)}
+						onDayCellContextMenu={(day, event) =>
+							handleCollapsedShiftDayContextMenu(group, groupIndex, day, event)}
 						onShiftCellContextMenu={(event) => handleShiftCellContextMenu(event, group)}
 						onHoverShiftCell={(pointer) => void showShiftMonthHoverTooltip(group, pointer)}
 						onLeaveShiftCell={hideHoverEventsTooltip}
 						onHoverDayCell={(day, _cellEl, pointer) => handleGroupDayHover(group, day, pointer)}
 						onLeaveDayCell={hideHoverEventsTooltip}
 						onToggle={() => onToggleGroup(group)}
+						ctrlMultiSelectedKeys={ctrlMultiSelectedCellKeys}
 					/>
 				{:else}
 					<div
@@ -2622,14 +3103,17 @@
 							onSelectRow={handleRowSelect}
 							onSelectCell={handleSelectCell}
 							onSelectDayCell={handleSelectDayCell}
+							onCtrlToggleDayCell={handleCtrlToggleEmployeeDayCell}
 							onDoubleClickDayCell={(employee, day) =>
 								handleEmployeeDayDoubleClick(employee, group.employeeTypeId ?? null, day)}
+							onDayCellContextMenu={handleEmployeeDayContextMenu}
 							onHoverNameCell={(pointer) =>
 								void showUserMonthHoverTooltip(employee, group.employeeTypeId ?? null, pointer)}
 							onLeaveNameCell={hideHoverEventsTooltip}
 							onHoverDayCell={(day, _cellEl, pointer) =>
 								handleEmployeeDayHover(employee, group.employeeTypeId ?? null, day, pointer)}
 							onLeaveDayCell={hideHoverEventsTooltip}
+							ctrlMultiSelectedKeys={ctrlMultiSelectedCellKeys}
 						/>
 					{/each}
 				{/if}
@@ -2756,7 +3240,11 @@
 											<strong>{eventRow.eventCodeCode}</strong>
 											<span>{eventRow.eventCodeName}{scopeSuffix ? ` - ${scopeSuffix}` : ''}</span>
 										</div>
-										{#if memberEventsPopupWindowMode === 'shift-month' || eventRow.startDate !== eventRow.endDate}
+										{#if memberEventsPopupIsCustomGroup && isCustomGroupMultiDateSelection()}
+											<div class="memberEventDates">
+												{formatEventDurationLabel(eventRow.startDate, eventRow.endDate)}
+											</div>
+										{:else if memberEventsPopupWindowMode === 'shift-month' || eventRow.startDate !== eventRow.endDate}
 											<div class="memberEventDates">
 												{formatEventDateOrRange(eventRow.startDate, eventRow.endDate)}
 											</div>
@@ -2812,42 +3300,70 @@
 								</div>
 							</div>
 
-							<div class="memberEventDateFields">
+							{#if isCustomGroupMultiDateSelection()}
 								<div class="memberEventField">
-									<span class="memberEventFieldLabel">Start Date</span>
-									<DatePicker
-										id="memberEventStartDateBtn"
-										menuId="memberEventStartDateMenu"
-										label="Start Date"
-										placeholder="Select start date"
-										value={addEventStartDate}
-										open={addStartDatePickerOpen}
-										onOpenChange={setAddStartDatePickerOpen}
-										on:change={(event) => {
-											addEventStartDate = event.detail;
-											if (addEventEndDate && addEventEndDate < addEventStartDate) {
-												addEventEndDate = addEventStartDate;
-											}
-										}}
-									/>
+									<span class="memberEventFieldLabel">Duration</span>
+									<div class="memberEventReminderPickerRow">
+										<ThemedSpinPicker
+											id="memberEventDurationAmount"
+											options={eventDurationAmountOptions}
+											value={addEventDurationAmount}
+											on:value={(event) => {
+												addEventDurationAmount = Number(event.detail);
+											}}
+										/>
+										<ThemedSpinPicker
+											id="memberEventDurationUnit"
+											options={eventDurationUnitOptions}
+											value={addEventDurationUnit}
+											on:value={(event) => {
+												addEventDurationUnit = event.detail as
+													| 'days'
+													| 'weeks'
+													| 'months'
+													| 'years';
+											}}
+										/>
+									</div>
 								</div>
-								<div class="memberEventField">
-									<span class="memberEventFieldLabel">End Date</span>
-									<DatePicker
-										id="memberEventEndDateBtn"
-										menuId="memberEventEndDateMenu"
-										label="End Date"
-										placeholder="Select end date"
-										value={addEventEndDate}
-										min={addEventStartDate}
-										open={addEndDatePickerOpen}
-										onOpenChange={setAddEndDatePickerOpen}
-										on:change={(event) => {
-											addEventEndDate = event.detail;
-										}}
-									/>
+							{:else}
+								<div class="memberEventDateFields">
+									<div class="memberEventField">
+										<span class="memberEventFieldLabel">Start Date</span>
+										<DatePicker
+											id="memberEventStartDateBtn"
+											menuId="memberEventStartDateMenu"
+											label="Start Date"
+											placeholder="Select start date"
+											value={addEventStartDate}
+											open={addStartDatePickerOpen}
+											onOpenChange={setAddStartDatePickerOpen}
+											on:change={(event) => {
+												addEventStartDate = event.detail;
+												if (addEventEndDate && addEventEndDate < addEventStartDate) {
+													addEventEndDate = addEventStartDate;
+												}
+											}}
+										/>
+									</div>
+									<div class="memberEventField">
+										<span class="memberEventFieldLabel">End Date</span>
+										<DatePicker
+											id="memberEventEndDateBtn"
+											menuId="memberEventEndDateMenu"
+											label="End Date"
+											placeholder="Select end date"
+											value={addEventEndDate}
+											min={addEventStartDate}
+											open={addEndDatePickerOpen}
+											onOpenChange={setAddEndDatePickerOpen}
+											on:change={(event) => {
+												addEventEndDate = event.detail;
+											}}
+										/>
+									</div>
 								</div>
-							</div>
+							{/if}
 
 							{#if !isCustomEventCodeSelected}
 								<div class="memberEventReminderSection">
@@ -3251,6 +3767,11 @@
 	:global(.shiftMergeLayout .cell.cellSelected) {
 		box-shadow: inset 0 0 0 2px var(--interactive-border-hover);
 		z-index: 34;
+	}
+
+	:global(.shiftMergeLayout .cell.multiCellSelected) {
+		box-shadow: inset 0 0 0 2px var(--interactive-border-hover);
+		z-index: 35;
 	}
 
 	:global(.shiftMergeLayout .namecol) {

@@ -17,6 +17,7 @@
   export let onSelectRow: (rowKey: string) => void = () => {};
   export let onSelectCell: (cellKey: string) => void = () => {};
   export let onSelectDayCell: (rowKey: string, day: number) => void = () => {};
+  export let onCtrlToggleDayCell: (rowKey: string, day: number, event: MouseEvent) => void = () => {};
   export let onOpenDisplayNameEditor: (employee: Employee) => void = () => {};
   export let monthDays: MonthDay[] = [];
   export let overrides: Record<string, { day: number; status: Status }[]>;
@@ -27,6 +28,7 @@
   export let isFirstInGroup = false;
   export let isLastInGroup = false;
   export let onDoubleClickDayCell: (employee: Employee, day: MonthDay) => void = () => {};
+  export let onDayCellContextMenu: (rowKey: string, day: number, event: MouseEvent) => void = () => {};
   export let onHoverDayCell: (
     day: MonthDay,
     cellEl: HTMLElement,
@@ -35,6 +37,7 @@
   export let onHoverNameCell: (pointer: { clientX: number; clientY: number }) => void = () => {};
   export let onLeaveNameCell: () => void = () => {};
   export let onLeaveDayCell: () => void = () => {};
+  export let ctrlMultiSelectedKeys = new Set<string>();
   const DOUBLE_TAP_WINDOW_MS = 320;
   let lastTouchTapDay: number | null = null;
   let lastTouchTapAtMs = 0;
@@ -139,19 +142,28 @@
 
 {#each rowData as cell, cellIndex}
   {@const isDayCellSelected = selectedCellKey === `day:${rowKey}:${cell.day.day}`}
+  {@const isCtrlMultiSelected = ctrlMultiSelectedKeys.has(`day:${rowKey}:${cell.day.day}`)}
   <div
-    class={`${dayClass(cell.day)}${isFirstInGroup ? ' groupStartBorder' : ''}${isLastVisibleRow ? ' lastVisibleRowBoundary' : ''}${cell.dayColor ? ' patternCell' : ''}${isRowSelected ? ` rowSelected${cellIndex === rowData.length - 1 ? ' rowEnd' : ''}` : ''}${isDayCellSelected ? ' cellSelected' : ''}`}
+    class={`${dayClass(cell.day)}${isFirstInGroup ? ' groupStartBorder' : ''}${isLastVisibleRow ? ' lastVisibleRowBoundary' : ''}${cell.dayColor ? ' patternCell' : ''}${isRowSelected ? ` rowSelected${cellIndex === rowData.length - 1 ? ' rowEnd' : ''}` : ''}${isDayCellSelected ? ' cellSelected' : ''}${isCtrlMultiSelected ? ' multiCellSelected' : ''}`}
     data-scope="employee-day"
     data-group-index={groupIndex}
     data-day={cell.day.day}
     data-group-end={isLastInGroup ? 'true' : undefined}
+    data-cell-key={`day:${rowKey}:${cell.day.day}`}
+    data-ctrl-target="true"
     role="gridcell"
     tabindex="-1"
     style={cell.dayColor ? `--pattern-cell-bg:${cell.dayColor};` : undefined}
-    on:click={() => onSelectDayCell(rowKey, cell.day.day)}
+    on:click={(event) => {
+      if (event.ctrlKey) {
+        onCtrlToggleDayCell(rowKey, cell.day.day, event);
+        return;
+      }
+      onSelectDayCell(rowKey, cell.day.day);
+    }}
     on:contextmenu={(event) => {
       event.preventDefault();
-      onDoubleClickDayCell(employee, cell.day);
+      onDayCellContextMenu(rowKey, cell.day.day, event);
     }}
     use:longPress={{ onLongPress: () => onDoubleClickDayCell(employee, cell.day) }}
     on:touchend={(event) => handleDayCellTouchEnd(cell.day, event)}

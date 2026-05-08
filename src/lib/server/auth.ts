@@ -448,6 +448,12 @@ async function ensureUsersTableExtensions() {
 		BEGIN
 			ALTER TABLE dbo.Users ADD EntraLastName nvarchar(100) NULL;
 		END
+		IF COL_LENGTH('dbo.Users', 'MinigamePersonalBest') IS NULL
+		BEGIN
+			ALTER TABLE dbo.Users
+			ADD MinigamePersonalBest int NOT NULL
+				CONSTRAINT DF_Users_MinigamePersonalBest DEFAULT 0;
+		END
 		IF COL_LENGTH('dbo.Users', 'OnboardingRole') IS NOT NULL
 		BEGIN
 			EXEC(N'
@@ -477,6 +483,14 @@ async function ensureUsersTableExtensions() {
 			EXEC(N'
 				ALTER TABLE dbo.Users
 				ADD CONSTRAINT CK_Users_OnboardingRole_Valid CHECK (OnboardingRole BETWEEN 0 AND 3);
+			');
+		END
+		IF OBJECT_ID('dbo.CK_Users_MinigamePersonalBest_NonNegative', 'C') IS NULL
+		BEGIN
+			EXEC(N'
+				ALTER TABLE dbo.Users
+				ADD CONSTRAINT CK_Users_MinigamePersonalBest_NonNegative
+				CHECK (MinigamePersonalBest >= 0);
 			');
 		END
 		IF COL_LENGTH('dbo.Users', 'ScheduleUiStateJson') IS NOT NULL

@@ -484,7 +484,6 @@ const shiftRows = (result.recordset as ShiftSectionRow[]).map((row) => ({
 			 FROM dbo.ScheduleAssignments sut
 			 LEFT JOIN dbo.Users u
 				ON u.UserOid = sut.UserOid
-			   AND u.DeletedAt IS NULL
 			 OUTER APPLY (
 				SELECT TOP (1) r.RoleName
 				FROM dbo.ScheduleUsers su
