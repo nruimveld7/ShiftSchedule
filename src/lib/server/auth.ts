@@ -792,16 +792,12 @@ export async function readSession(event: RequestEvent): Promise<Session | null> 
 	}
 }
 
-export async function getSessionAccessToken(event: RequestEvent): Promise<string> {
-	const token = event.cookies.get(SESSION_COOKIE);
-	if (!token) {
-		throw error(401, 'Missing session');
-	}
+async function getSessionAccessTokenBySessionId(sessionId: string): Promise<string> {
 	await ensureSessionTable();
 	const pool = await GetPool();
 	const result = await pool
 		.request()
-		.input('sessionId', token)
+		.input('sessionId', sessionId)
 		.query(
 			`SELECT TOP (1) UserOid, Email, Name, AccessToken, RefreshToken, ExpiresAt
 			 FROM dbo.UserSessions
@@ -811,12 +807,32 @@ export async function getSessionAccessToken(event: RequestEvent): Promise<string
 	if (!sessionRow) {
 		throw error(401, 'Invalid session');
 	}
-	const row = await refreshSessionIfExpired(pool, token, sessionRow);
+	const row = await refreshSessionIfExpired(pool, sessionId, sessionRow);
 	if (!row) {
 		throw error(401, 'Session expired');
 	}
 	await cleanupSessions();
 	return row.AccessToken;
+}
+
+export async function getSessionAccessToken(event: RequestEvent): Promise<string> {
+	const token = event.cookies.get(SESSION_COOKIE);
+	if (!token) {
+		throw error(401, 'Missing session');
+	}
+	return getSessionAccessTokenBySessionId(token);
+}
+
+export async function tryGetSessionAccessTokenFromCookies(cookies: Cookies): Promise<string | null> {
+	const token = cookies.get(SESSION_COOKIE);
+	if (!token) {
+		return null;
+	}
+	try {
+		return await getSessionAccessTokenBySessionId(token);
+	} catch {
+		return null;
+	}
 }
 
 export async function getActiveScheduleId(

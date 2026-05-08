@@ -178,6 +178,7 @@ export type EffectiveScheduleMembership = {
 	ScheduleId: number;
 	Name: string;
 	RoleName: ScheduleRole;
+	IsBootstrapOnly: boolean;
 	IsDefault: boolean;
 	IsActive: boolean;
 	ThemeJson: string | null;
@@ -195,12 +196,27 @@ export async function listEffectiveScheduleMemberships(params: {
 	if (bootstrap) {
 		const result = await pool
 			.request()
+			.input('userOid', params.userOid)
 			.input('defaultScheduleId', params.defaultScheduleId)
 			.query(
 				`SELECT
 					s.ScheduleId,
 					s.Name,
 					CAST('Manager' AS nvarchar(20)) AS RoleName,
+					CAST(
+						CASE
+							WHEN EXISTS (
+								SELECT 1
+								FROM dbo.ScheduleUsers su
+								WHERE su.ScheduleId = s.ScheduleId
+								  AND su.UserOid = @userOid
+								  AND su.IsActive = 1
+								  AND su.DeletedAt IS NULL
+							)
+							THEN 0
+							ELSE 1
+						END
+					AS bit) AS IsBootstrapOnly,
 					CAST(CASE WHEN s.ScheduleId = @defaultScheduleId THEN 1 ELSE 0 END AS bit) AS IsDefault,
 					s.IsActive,
 					s.ThemeJson,
@@ -217,14 +233,15 @@ export async function listEffectiveScheduleMemberships(params: {
 		.input('userOid', params.userOid)
 		.input('defaultScheduleId', params.defaultScheduleId)
 		.query(
-			`WITH RankedMemberships AS (
-				SELECT
-					su.ScheduleId,
-					s.Name,
-					r.RoleName,
-					s.IsActive,
-					s.ThemeJson,
-					COALESCE(s.UpdatedAt, s.CreatedAt) AS VersionAt,
+				`WITH RankedMemberships AS (
+					SELECT
+						su.ScheduleId,
+						s.Name,
+						r.RoleName,
+						CAST(0 AS bit) AS IsBootstrapOnly,
+						s.IsActive,
+						s.ThemeJson,
+						COALESCE(s.UpdatedAt, s.CreatedAt) AS VersionAt,
 					CAST(CASE WHEN su.ScheduleId = @defaultScheduleId THEN 1 ELSE 0 END AS bit) AS IsDefault,
 					ROW_NUMBER() OVER (
 						PARTITION BY su.ScheduleId
@@ -248,10 +265,10 @@ export async function listEffectiveScheduleMemberships(params: {
 				  AND s.DeletedAt IS NULL
 				  AND (s.IsActive = 1 OR r.RoleName = 'Manager')
 			)
-			SELECT ScheduleId, Name, RoleName, IsDefault, IsActive, ThemeJson, VersionAt
-			FROM RankedMemberships
-			WHERE RoleRank = 1
-			ORDER BY IsDefault DESC, Name;`
+				SELECT ScheduleId, Name, RoleName, IsBootstrapOnly, IsDefault, IsActive, ThemeJson, VersionAt
+				FROM RankedMemberships
+				WHERE RoleRank = 1
+				ORDER BY IsDefault DESC, Name;`
 		);
 
 	return (result.recordset ?? []) as EffectiveScheduleMembership[];

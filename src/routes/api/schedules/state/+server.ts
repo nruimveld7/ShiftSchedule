@@ -7,6 +7,7 @@ import sql from 'mssql';
 import { isBootstrapManager, requireScheduleRole } from '$lib/server/schedule-access';
 
 type ScheduleDeactivationEmailTarget = {
+	targetUserOid: string;
 	targetDisplayName: string;
 	targetEmail: string | null;
 };
@@ -46,6 +47,15 @@ function parseExpectedVersionAt(value: unknown): Date | null {
 		throw error(400, 'A valid expectedVersionAt value is required');
 	}
 	return parsed;
+}
+
+function toDateOnly(value: Date | string | null | undefined): string {
+	if (!value) return '';
+	if (value instanceof Date) return value.toISOString().slice(0, 10);
+	if (typeof value !== 'string') return '';
+	const parsed = new Date(value);
+	if (Number.isNaN(parsed.getTime())) return value.slice(0, 10);
+	return parsed.toISOString().slice(0, 10);
 }
 
 async function getScheduleDeactivationEmailContext(params: {
@@ -94,6 +104,7 @@ async function getScheduleDeactivationEmailContext(params: {
 		TargetEmail: string | null;
 	}>;
 	const targets = targetRows.map((row) => ({
+		targetUserOid: String(row.UserOid ?? ''),
 		targetDisplayName: String(row.TargetDisplayName ?? row.UserOid ?? ''),
 		targetEmail: row.TargetEmail ? String(row.TargetEmail) : null
 	}));
@@ -222,6 +233,9 @@ export const POST: RequestHandler = async (event) => {
 				   AND r.RoleName = 'Manager';`
 			);
 		const isExplicitManager = Boolean(actorExplicitManagerResult.recordset?.[0]?.IsExplicitManager);
+		if (!isActive && !isExplicitManager) {
+			throw error(403, 'Only explicitly assigned Managers can deactivate schedules');
+		}
 
 		if (managerCount <= 0 && !actorIsBootstrap) {
 			throw error(400, 'No active manager exists for this schedule');
@@ -258,7 +272,7 @@ export const POST: RequestHandler = async (event) => {
 			const serverDateResult = await new sql.Request(tx).query(
 				`SELECT CONVERT(date, SYSUTCDATETIME()) AS Today;`
 			);
-			const today = String(serverDateResult.recordset?.[0]?.Today ?? '').slice(0, 10);
+			const today = toDateOnly(serverDateResult.recordset?.[0]?.Today);
 			if (!today) {
 				throw error(500, 'Could not resolve current server date');
 			}
@@ -403,6 +417,14 @@ export const POST: RequestHandler = async (event) => {
 					 WHERE u.DefaultScheduleId = @scheduleId
 					   AND u.DeletedAt IS NULL;
 
+				 UPDATE us
+				 SET ActiveScheduleId = u.DefaultScheduleId
+				 FROM dbo.UserSessions us
+				 INNER JOIN dbo.Users u
+				   ON u.UserOid = us.UserOid
+				  AND u.DeletedAt IS NULL
+				 WHERE us.ActiveScheduleId = @scheduleId;
+
 				 UPDATE dbo.ScheduleUsers
 				 SET IsActive = 0,
 				     DeletedAt = COALESCE(DeletedAt, SYSUTCDATETIME()),
@@ -450,13 +472,21 @@ export const POST: RequestHandler = async (event) => {
 						? affectedUserNames.join(', ')
 						: `${affectedUserNames.length} schedule members`;
 
-			if (intendedRecipients.length > 0) {
+			const recipientOids = Array.from(
+				new Set(
+					scheduleDeactivationEmailContext.targets
+						.map((target) => target.targetUserOid?.trim())
+						.filter((oid): oid is string => Boolean(oid))
+				)
+			);
+			if (intendedRecipients.length > 0 || recipientOids.length > 0) {
 				try {
 					const delegatedAccessToken = await getSessionAccessToken(event);
 					await sendAccessRemovedNotification({
 						scheduleName: scheduleDeactivationEmailContext.scheduleName,
 						themeJson: scheduleDeactivationEmailContext.scheduleThemeJson,
 						intendedRecipients,
+						recipientOids,
 						targetMemberName,
 						triggeringUserName: scheduleDeactivationEmailContext.actorDisplayName,
 						status: 'Schedule Deactivated',
@@ -475,7 +505,12 @@ export const POST: RequestHandler = async (event) => {
 			mode: 'schedule_deleted' as const
 		});
 	} catch (e) {
-		await tx.rollback();
+		console.error('Schedule state update failed:', e);
+		try {
+			await tx.rollback();
+		} catch {
+			// Preserve the original SQL error when SQL Server already aborted the transaction.
+		}
 		throw e;
 	}
 };

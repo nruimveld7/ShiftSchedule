@@ -733,7 +733,7 @@
 
 .teamColumnRailViewportGlyph {
   position: absolute;
-  left: calc(var(--shift-col-width, clamp(44px, 5vw, 64px)) + var(--team-col-width, 27ch) + (var(--team-toggle-col-width, 14px) / 2));
+  left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
   width: 14px;

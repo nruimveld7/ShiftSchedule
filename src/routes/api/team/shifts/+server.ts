@@ -2118,6 +2118,7 @@ export const DELETE: RequestHandler = async (event) => {
 					scheduleName: emailContext.scheduleName,
 					themeJson: emailContext.scheduleThemeJson,
 					intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+					recipientOids: [impacted.userOid],
 					targetMemberName: emailContext.targetDisplayName,
 					date: impacted.notifyDate,
 					previousShift: currentShiftName,

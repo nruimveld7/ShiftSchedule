@@ -1,6 +1,11 @@
 import type { PageServerLoad } from './$types';
 import { GetPool } from '$lib/server/db';
-import { getActiveScheduleId, setActiveScheduleForSession } from '$lib/server/auth';
+import {
+	getActiveScheduleId,
+	setActiveScheduleForSession,
+	tryGetSessionAccessTokenFromCookies
+} from '$lib/server/auth';
+import { triggerScheduleUserEmailSync } from '$lib/server/entra-user-sync';
 import {
 	getRoleTier,
 	loadOnboardingSlidesByTierRange,
@@ -19,6 +24,7 @@ type ScheduleMembership = {
 	ScheduleId: number;
 	Name: string;
 	RoleName: ScheduleRole;
+	IsBootstrapOnly: boolean;
 	IsDefault: boolean;
 	IsActive: boolean;
 	ThemeJson: string | null;
@@ -81,6 +87,13 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		scheduleId = scheduleMemberships[0]?.ScheduleId ?? null;
 		if (scheduleId) {
 			await setActiveScheduleForSession(cookies, scheduleId);
+		}
+	}
+
+	if (scheduleId) {
+		const delegatedAccessToken = await tryGetSessionAccessTokenFromCookies(cookies);
+		if (delegatedAccessToken) {
+			triggerScheduleUserEmailSync({ scheduleId, accessToken: delegatedAccessToken });
 		}
 	}
 

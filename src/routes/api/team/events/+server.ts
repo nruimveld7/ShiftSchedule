@@ -28,6 +28,7 @@ type ScheduleEventRow = {
 	CoverageColor: string | null;
 	NotifyImmediately: boolean | null;
 	ScheduledRemindersJson: string | null;
+	RemindersHandled: boolean | null;
 };
 
 type ExistingEventScopeRow = {
@@ -44,12 +45,14 @@ type ExistingEventScopeRow = {
 	CustomColor: string | null;
 	NotifyImmediately: boolean | null;
 	ScheduledRemindersJson: string | null;
+	RemindersHandled: boolean | null;
 };
 
 type ScheduleEventsCapabilities = {
 	hasShiftId: boolean;
 	hasCustomColumns: boolean;
 	hasReminderColumns: boolean;
+	hasRemindersHandledColumn: boolean;
 };
 
 type ReminderUnit = 'days' | 'weeks' | 'months';
@@ -63,6 +66,7 @@ type ReminderDraft = {
 	handledAtUtc?: string;
 };
 type AffectedEventMember = {
+	userOid: string;
 	name: string;
 	email: string | null;
 };
@@ -346,6 +350,7 @@ function eventVersionStamp(row: ExistingEventScopeRow): string {
 	const customColor = row.CustomColor?.trim().toLowerCase() ?? '';
 	const notes = row.Notes?.trim() ?? '';
 	const scheduledRemindersJson = row.ScheduledRemindersJson?.trim() ?? '';
+	const remindersHandled = row.RemindersHandled === true ? '1' : '0';
 	return [
 		eventId,
 		userOid,
@@ -358,7 +363,8 @@ function eventVersionStamp(row: ExistingEventScopeRow): string {
 		customDisplayMode,
 		customColor,
 		notes,
-		scheduledRemindersJson
+		scheduledRemindersJson,
+		remindersHandled
 	].join('|');
 }
 
@@ -381,7 +387,8 @@ async function getScheduleEventsCapabilities(
 			columns.has('CustomName') &&
 			columns.has('CustomDisplayMode') &&
 			columns.has('CustomColor'),
-		hasReminderColumns: columns.has('ScheduledRemindersJson')
+		hasReminderColumns: columns.has('ScheduledRemindersJson'),
+		hasRemindersHandledColumn: columns.has('RemindersHandled')
 	};
 }
 
@@ -450,18 +457,19 @@ async function ensureCoverageCodeIsValid(
 }
 
 function formatEventDateForEmail(startDate: string, endDate: string): string {
-	const formatter = new Intl.DateTimeFormat('en-US', {
-		month: 'short',
-		day: 'numeric',
-		year: 'numeric'
-	});
-	const start = new Date(`${startDate}T00:00:00Z`);
-	const end = new Date(`${endDate}T00:00:00Z`);
-	if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-		return startDate === endDate ? startDate : `${startDate} to ${endDate}`;
-	}
-	const startText = formatter.format(start);
-	const endText = formatter.format(end);
+	const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+	const formatDateOnlyLabel = (value: string): string => {
+		const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+		if (!match) return value;
+		const year = Number(match[1]);
+		const month = Number(match[2]);
+		const day = Number(match[3]);
+		if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return value;
+		if (month < 1 || month > 12 || day < 1 || day > 31) return value;
+		return `${monthNames[month - 1]} ${day}, ${year}`;
+	};
+	const startText = formatDateOnlyLabel(startDate);
+	const endText = formatDateOnlyLabel(endDate);
 	return startDate === endDate ? startText : `${startText} to ${endText}`;
 }
 
@@ -507,6 +515,7 @@ async function getAffectedEventMemberNames(params: {
 			.input('userOid', userOid)
 			.query(
 				`SELECT TOP (1)
+					su.UserOid AS MemberUserOid,
 					COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
 					NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
 				 FROM dbo.ScheduleUsers su
@@ -517,9 +526,10 @@ async function getAffectedEventMemberNames(params: {
 				   AND su.IsActive = 1
 				   AND su.DeletedAt IS NULL;`
 			);
+		const resolvedUserOid = result.recordset?.[0]?.MemberUserOid?.trim();
 		const name = result.recordset?.[0]?.MemberName?.trim();
 		const email = result.recordset?.[0]?.MemberEmail?.trim() || null;
-		return name ? [{ name, email }] : [];
+		return name && resolvedUserOid ? [{ userOid: resolvedUserOid, name, email }] : [];
 	}
 
 	if (scope === 'shift') {
@@ -532,6 +542,7 @@ async function getAffectedEventMemberNames(params: {
 			.input('endDate', endDate)
 			.query(
 				`SELECT DISTINCT
+					sut.UserOid AS MemberUserOid,
 					COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
 					NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
 				 FROM dbo.ScheduleAssignments sut
@@ -550,12 +561,19 @@ async function getAffectedEventMemberNames(params: {
 				   AND (sut.EndDate IS NULL OR sut.EndDate >= @startDate)
 				 ORDER BY MemberName ASC;`
 			);
-		return (result.recordset as Array<{ MemberName: string | null; MemberEmail: string | null }>)
+		return (
+			result.recordset as Array<{
+				MemberUserOid: string;
+				MemberName: string | null;
+				MemberEmail: string | null;
+			}>
+		)
 			.map((row) => ({
+				userOid: row.MemberUserOid?.trim() || '',
 				name: row.MemberName?.trim() || '',
 				email: row.MemberEmail?.trim() || null
 			}))
-			.filter((row) => Boolean(row.name));
+			.filter((row) => Boolean(row.userOid) && Boolean(row.name));
 	}
 
 	const result = await pool
@@ -565,6 +583,7 @@ async function getAffectedEventMemberNames(params: {
 		.input('endDate', endDate)
 		.query(
 			`SELECT DISTINCT
+			sut.UserOid AS MemberUserOid,
 			COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
 			NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
 		 FROM dbo.ScheduleAssignments sut
@@ -582,9 +601,19 @@ async function getAffectedEventMemberNames(params: {
 		   AND (sut.EndDate IS NULL OR sut.EndDate >= @startDate)
 		 ORDER BY MemberName ASC;`
 		);
-	return (result.recordset as Array<{ MemberName: string | null; MemberEmail: string | null }>)
-		.map((row) => ({ name: row.MemberName?.trim() || '', email: row.MemberEmail?.trim() || null }))
-		.filter((row) => Boolean(row.name));
+	return (
+		result.recordset as Array<{
+			MemberUserOid: string;
+			MemberName: string | null;
+			MemberEmail: string | null;
+		}>
+	)
+		.map((row) => ({
+			userOid: row.MemberUserOid?.trim() || '',
+			name: row.MemberName?.trim() || '',
+			email: row.MemberEmail?.trim() || null
+		}))
+		.filter((row) => Boolean(row.userOid) && Boolean(row.name));
 }
 
 async function cleanScopeInputs(
@@ -689,6 +718,9 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
 	const selectScheduledRemindersJson = capabilities.hasReminderColumns
 		? 'se.ScheduledRemindersJson'
 		: 'CAST(NULL AS nvarchar(max)) AS ScheduledRemindersJson';
+	const selectRemindersHandled = capabilities.hasRemindersHandledColumn
+		? 'se.RemindersHandled'
+		: 'CAST(0 AS bit) AS RemindersHandled';
 	const globalPredicate = capabilities.hasShiftId
 		? '(se.ShiftId IS NULL AND se.UserOid IS NULL)'
 		: '(se.UserOid IS NULL)';
@@ -730,6 +762,7 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
 			${selectCustomColor},
 			${selectNotifyImmediately},
 			${selectScheduledRemindersJson},
+			${selectRemindersHandled},
 			cc.Code AS CoverageCode,
 			cc.Label AS CoverageLabel,
 			cc.DisplayMode AS CoverageDisplayMode,
@@ -791,7 +824,8 @@ export const GET: RequestHandler = async ({ locals, cookies, url }) => {
 				CustomDisplayMode: row.CustomDisplayMode,
 				CustomColor: row.CustomColor,
 				NotifyImmediately: row.NotifyImmediately,
-				ScheduledRemindersJson: row.ScheduledRemindersJson
+				ScheduledRemindersJson: row.ScheduledRemindersJson,
+				RemindersHandled: row.RemindersHandled
 			}),
 			isCustom,
 			notifyImmediately: Boolean(row.NotifyImmediately),
@@ -920,6 +954,7 @@ export const POST: RequestHandler = async (event) => {
 		null
 	);
 	const scheduledRemindersJson = remindersToJson(scheduledReminders);
+	const remindersHandled = scheduledReminders.every((reminder) => reminder.handled === true);
 
 	const insertColumns = [
 		'ScheduleId',
@@ -951,6 +986,10 @@ export const POST: RequestHandler = async (event) => {
 		insertColumns.splice(6, 0, 'ScheduledRemindersJson');
 		insertValues.splice(6, 0, '@scheduledRemindersJson');
 	}
+	if (capabilities.hasRemindersHandledColumn) {
+		insertColumns.splice(7, 0, 'RemindersHandled');
+		insertValues.splice(7, 0, '@remindersHandled');
+	}
 
 	const insertResult = await pool
 		.request()
@@ -965,6 +1004,7 @@ export const POST: RequestHandler = async (event) => {
 		.input('customDisplayMode', customDisplayMode)
 		.input('customColor', customColor)
 		.input('scheduledRemindersJson', scheduledRemindersJson)
+		.input('remindersHandled', remindersHandled)
 		.input('comments', comments || null)
 		.input('actorOid', actorOid)
 		.query(
@@ -992,6 +1032,7 @@ export const POST: RequestHandler = async (event) => {
 				const intendedRecipients = affectedUsers
 					.map((member) => member.email)
 					.filter((email): email is string => Boolean(email));
+				const recipientOids = Array.from(new Set(affectedUsers.map((member) => member.userOid)));
 				const affectedUserNames = affectedUsers.map((member) => member.name);
 				const targetMemberName =
 					affectedUserNames.length === 0
@@ -1003,6 +1044,7 @@ export const POST: RequestHandler = async (event) => {
 					scheduleName: context.scheduleName,
 					themeJson: context.scheduleThemeJson,
 					intendedRecipients,
+					recipientOids,
 					targetMemberName,
 					eventName: notificationEventName,
 					date: formatEventDateForEmail(startDate, endDate),
@@ -1058,6 +1100,9 @@ export const PATCH: RequestHandler = async (event) => {
 	const existingQueryScheduledRemindersJson = capabilities.hasReminderColumns
 		? 'ScheduledRemindersJson'
 		: 'CAST(NULL AS nvarchar(max)) AS ScheduledRemindersJson';
+	const existingQueryRemindersHandled = capabilities.hasRemindersHandledColumn
+		? 'RemindersHandled'
+		: 'CAST(0 AS bit) AS RemindersHandled';
 
 	const existsResult = await pool
 		.request()
@@ -1077,7 +1122,8 @@ export const PATCH: RequestHandler = async (event) => {
 				${existingQueryCustomDisplayMode},
 				${existingQueryCustomColor},
 				${existingQueryNotifyImmediately},
-				${existingQueryScheduledRemindersJson}
+				${existingQueryScheduledRemindersJson},
+				${existingQueryRemindersHandled}
 			 FROM dbo.ScheduleEvents
 			 WHERE ScheduleId = @scheduleId
 			   AND EventId = @eventId
@@ -1185,7 +1231,12 @@ export const PATCH: RequestHandler = async (event) => {
 		customName = cleanOptionalCustomName(body.customName, customCode);
 		notificationEventName = customName || customCode || 'Custom Event';
 	}
+	scheduledReminders = mergeReminderHandlingFromExisting(
+		scheduledReminders,
+		existingEvent.ScheduledRemindersJson ?? null
+	);
 	const scheduledRemindersJson = remindersToJson(scheduledReminders);
+	const remindersHandled = scheduledReminders.every((reminder) => reminder.handled === true);
 
 	const setClauses = [
 		'UserOid = @userOid',
@@ -1209,6 +1260,9 @@ export const PATCH: RequestHandler = async (event) => {
 	}
 	if (capabilities.hasReminderColumns) {
 		setClauses.push('ScheduledRemindersJson = @scheduledRemindersJson');
+	}
+	if (capabilities.hasRemindersHandledColumn) {
+		setClauses.push('RemindersHandled = @remindersHandled');
 	}
 
 	const whereClauses = [
@@ -1240,6 +1294,9 @@ export const PATCH: RequestHandler = async (event) => {
 			"ISNULL(ScheduledRemindersJson, N'') = ISNULL(@originalScheduledRemindersJson, N'')"
 		);
 	}
+	if (capabilities.hasRemindersHandledColumn) {
+		whereClauses.push('ISNULL(RemindersHandled, 0) = ISNULL(@originalRemindersHandled, 0)');
+	}
 
 	const updateResult = await pool
 		.request()
@@ -1255,6 +1312,7 @@ export const PATCH: RequestHandler = async (event) => {
 		.input('customDisplayMode', customDisplayMode)
 		.input('customColor', customColor)
 		.input('scheduledRemindersJson', scheduledRemindersJson)
+		.input('remindersHandled', remindersHandled)
 		.input('comments', comments || null)
 		.input('originalUserOid', existingEvent.UserOid?.trim() || null)
 		.input(
@@ -1275,6 +1333,7 @@ export const PATCH: RequestHandler = async (event) => {
 		.input('originalCustomDisplayMode', existingEvent.CustomDisplayMode?.trim() || null)
 		.input('originalCustomColor', existingEvent.CustomColor?.trim().toLowerCase() || null)
 		.input('originalScheduledRemindersJson', existingEvent.ScheduledRemindersJson?.trim() || null)
+		.input('originalRemindersHandled', existingEvent.RemindersHandled === true ? 1 : 0)
 		.query(
 			`UPDATE dbo.ScheduleEvents
 			 SET ${setClauses.join(', ')}
@@ -1309,6 +1368,7 @@ export const PATCH: RequestHandler = async (event) => {
 				const intendedRecipients = affectedUsers
 					.map((member) => member.email)
 					.filter((email): email is string => Boolean(email));
+				const recipientOids = Array.from(new Set(affectedUsers.map((member) => member.userOid)));
 				const affectedUserNames = affectedUsers.map((member) => member.name);
 				const targetMemberName =
 					affectedUserNames.length === 0
@@ -1320,6 +1380,7 @@ export const PATCH: RequestHandler = async (event) => {
 					scheduleName: context.scheduleName,
 					themeJson: context.scheduleThemeJson,
 					intendedRecipients,
+					recipientOids,
 					targetMemberName,
 					eventName: notificationEventName,
 					date: formatEventDateForEmail(startDate, endDate),
@@ -1373,6 +1434,9 @@ export const DELETE: RequestHandler = async ({ locals, cookies, request }) => {
 	const existingQueryScheduledRemindersJson = capabilities.hasReminderColumns
 		? 'ScheduledRemindersJson'
 		: 'CAST(NULL AS nvarchar(max)) AS ScheduledRemindersJson';
+	const existingQueryRemindersHandled = capabilities.hasRemindersHandledColumn
+		? 'RemindersHandled'
+		: 'CAST(0 AS bit) AS RemindersHandled';
 
 	const tx = new sql.Transaction(pool);
 	await tx.begin();
@@ -1394,7 +1458,8 @@ export const DELETE: RequestHandler = async ({ locals, cookies, request }) => {
 					${existingQueryCustomDisplayMode},
 					${existingQueryCustomColor},
 					${existingQueryNotifyImmediately},
-					${existingQueryScheduledRemindersJson}
+					${existingQueryScheduledRemindersJson},
+					${existingQueryRemindersHandled}
 				 FROM dbo.ScheduleEvents WITH (UPDLOCK, HOLDLOCK)
 				 WHERE ScheduleId = @scheduleId
 				   AND EventId = @eventId

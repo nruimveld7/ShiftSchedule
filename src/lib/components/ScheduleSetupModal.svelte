@@ -13,6 +13,7 @@
 		ScheduleId: number;
 		Name: string;
 		RoleName: ScheduleRole;
+		IsBootstrapOnly?: boolean;
 		IsDefault: boolean;
 		IsActive: boolean;
 		ThemeJson?: string | null;
@@ -115,6 +116,7 @@
 	let lastManagerSelectionId: number | null = null;
 	let selectedThemeMode: ThemeMode = 'dark';
 	let selectedThemeSection: ThemeSection = 'page';
+	let managerDeactivateDisabledForBootstrapOnly = false;
 	let modalScrollEl: HTMLDivElement | null = null;
 	let modalEl: HTMLDivElement | null = null;
 	let railEl: HTMLDivElement | null = null;
@@ -702,6 +704,9 @@
 	async function toggleManagerScheduleActive() {
 		if (!selectedMembership || selectedMembership.RoleName !== 'Manager' || !selectedManagerDraft)
 			return;
+		if (selectedMembership.IsBootstrapOnly && selectedManagerDraft.isActive) {
+			return;
+		}
 		if (isTogglingScheduleState) return;
 		isTogglingScheduleState = true;
 		actionError = '';
@@ -975,8 +980,13 @@
 		}
 	}
 
-	function scheduleRoleSuffix(role: ScheduleRole): string {
-		return role === 'Manager' ? ' (Manager)' : role === 'Maintainer' ? ' (Maintainer)' : '';
+	function scheduleRoleSuffix(membership: ScheduleMembership): string {
+		if (membership.IsBootstrapOnly) return ' (Bootstrap)';
+		return membership.RoleName === 'Manager'
+			? ' (Manager)'
+			: membership.RoleName === 'Maintainer'
+				? ' (Maintainer)'
+				: '';
 	}
 
 	function clamp(value: number, min: number, max: number): number {
@@ -1166,14 +1176,15 @@
 				activeScheduleId?: number | null;
 				memberships?: ScheduleMembership[];
 			};
-			liveMemberships = Array.isArray(data.memberships)
-				? data.memberships.map((membership) => ({
-						...membership,
-						ScheduleId: Number(membership.ScheduleId),
-						IsActive: Boolean(membership.IsActive),
-						ThemeJson: typeof membership.ThemeJson === 'string' ? membership.ThemeJson : null,
-						VersionAt: typeof membership.VersionAt === 'string' ? membership.VersionAt : null
-					}))
+				liveMemberships = Array.isArray(data.memberships)
+					? data.memberships.map((membership) => ({
+							...membership,
+							ScheduleId: Number(membership.ScheduleId),
+							IsBootstrapOnly: Boolean(membership.IsBootstrapOnly),
+							IsActive: Boolean(membership.IsActive),
+							ThemeJson: typeof membership.ThemeJson === 'string' ? membership.ThemeJson : null,
+							VersionAt: typeof membership.VersionAt === 'string' ? membership.VersionAt : null
+						}))
 				: [];
 			currentScheduleId = normalizeScheduleId(data.activeScheduleId) ?? currentScheduleId;
 			if (syncSelectionToCurrentOnRefresh) {
@@ -1353,6 +1364,11 @@
 					selectedManagerSaved.scheduleName
 				) !== selectedManagerSaved.scheduleName || hasManagerThemeChanges
 			: false;
+	$: managerDeactivateDisabledForBootstrapOnly = Boolean(
+		selectedMembership?.RoleName === 'Manager' &&
+			selectedMembership?.IsBootstrapOnly &&
+			selectedManagerDraft?.isActive
+	);
 
 	$: {
 		const currentManagerSelectionId =
@@ -1505,7 +1521,7 @@
 									aria-current={membership.ScheduleId === selectedScheduleId ? 'page' : undefined}
 									on:click={() => handleSelectSchedule(membership.ScheduleId)}
 								>
-									{displayScheduleName(membership)}{scheduleRoleSuffix(membership.RoleName)}
+									{displayScheduleName(membership)}{scheduleRoleSuffix(membership)}
 								</button>
 							{/each}
 						{/if}
@@ -1603,22 +1619,34 @@
 													on:input={handleManagerNameInput}
 													placeholder="Schedule name"
 												/>
-											</label>
-											<button
-												class={`btn managerScheduleToggleBtn ${selectedManagerDraft.isActive ? 'managerScheduleToggleBtnDanger' : 'managerScheduleToggleBtnSuccess'}`}
-												type="button"
-												on:click={toggleManagerScheduleActive}
-												disabled={isTogglingScheduleState}
-											>
-												{isTogglingScheduleState
-													? 'Saving...'
-													: selectedManagerDraft.isActive
-														? 'Deactivate'
-														: 'Activate'}
-											</button>
-										</div>
-										{#if isSelectedMembershipActive}
-											<div class="managerThemesSection">
+												</label>
+												<button
+													class={`btn managerScheduleToggleBtn ${selectedManagerDraft.isActive ? 'managerScheduleToggleBtnDanger' : 'managerScheduleToggleBtnSuccess'}`}
+													type="button"
+													on:click={toggleManagerScheduleActive}
+													disabled={
+														isTogglingScheduleState ||
+														managerDeactivateDisabledForBootstrapOnly
+													}
+													title={managerDeactivateDisabledForBootstrapOnly
+														? 'Only explicitly assigned Managers can deactivate a schedule.'
+														: undefined}
+												>
+													{isTogglingScheduleState
+														? 'Saving...'
+														: selectedManagerDraft.isActive
+															? 'Deactivate'
+															: 'Activate'}
+												</button>
+											</div>
+											{#if managerDeactivateDisabledForBootstrapOnly}
+												<p class="setupCardHint">
+													This schedule can only be deactivated by an explicitly assigned
+													Manager.
+												</p>
+											{/if}
+											{#if isSelectedMembershipActive}
+												<div class="managerThemesSection">
 												<div class="managerThemesContainer" class:expanded={managerThemesExpanded}>
 													<button
 														type="button"

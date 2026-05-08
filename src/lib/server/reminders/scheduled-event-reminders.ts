@@ -32,6 +32,7 @@ type CandidateEventRow = {
 };
 
 type AffectedEventMember = {
+	userOid: string;
 	name: string;
 	email: string | null;
 };
@@ -157,18 +158,19 @@ function formatEventDateForEmail(startDate: Date | string, endDate: Date | strin
 	const startDateOnly = toDateOnly(startDate);
 	const endDateOnly = toDateOnly(endDate);
 	if (!startDateOnly || !endDateOnly) return '';
-	const formatter = new Intl.DateTimeFormat('en-US', {
-		month: 'short',
-		day: 'numeric',
-		year: 'numeric'
-	});
-	const start = new Date(`${startDateOnly}T00:00:00Z`);
-	const end = new Date(`${endDateOnly}T00:00:00Z`);
-	if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-		return startDateOnly === endDateOnly ? startDateOnly : `${startDateOnly} to ${endDateOnly}`;
-	}
-	const startText = formatter.format(start);
-	const endText = formatter.format(end);
+	const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+	const formatDateOnlyLabel = (value: string): string => {
+		const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+		if (!match) return value;
+		const year = Number(match[1]);
+		const month = Number(match[2]);
+		const day = Number(match[3]);
+		if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return value;
+		if (month < 1 || month > 12 || day < 1 || day > 31) return value;
+		return `${monthNames[month - 1]} ${day}, ${year}`;
+	};
+	const startText = formatDateOnlyLabel(startDateOnly);
+	const endText = formatDateOnlyLabel(endDateOnly);
 	return startDateOnly === endDateOnly ? startText : `${startText} to ${endText}`;
 }
 
@@ -206,6 +208,7 @@ async function getAffectedEventMemberNames(params: {
 			.input('userOid', userOid)
 			.query(
 				`SELECT TOP (1)
+					su.UserOid AS MemberUserOid,
 					COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
 					NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
 				 FROM dbo.ScheduleUsers su
@@ -216,9 +219,12 @@ async function getAffectedEventMemberNames(params: {
 				   AND su.IsActive = 1
 				   AND su.DeletedAt IS NULL;`
 			);
+		const memberUserOid = result.recordset?.[0]?.MemberUserOid?.trim();
 		const memberName = result.recordset?.[0]?.MemberName?.trim();
 		const memberEmail = result.recordset?.[0]?.MemberEmail?.trim() || null;
-		return memberName ? [{ name: memberName, email: memberEmail }] : [];
+		return memberName && memberUserOid
+			? [{ userOid: memberUserOid, name: memberName, email: memberEmail }]
+			: [];
 	}
 
 	if (shiftId !== null) {
@@ -230,6 +236,7 @@ async function getAffectedEventMemberNames(params: {
 			.input('endDate', endDateOnly)
 			.query(
 				`SELECT DISTINCT
+					sa.UserOid AS MemberUserOid,
 					COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
 					NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
 				 FROM dbo.ScheduleAssignments sa
@@ -248,12 +255,19 @@ async function getAffectedEventMemberNames(params: {
 				   AND (sa.EndDate IS NULL OR sa.EndDate >= @startDate)
 				 ORDER BY MemberName ASC;`
 			);
-		return (result.recordset as Array<{ MemberName: string | null; MemberEmail: string | null }>)
+		return (
+			result.recordset as Array<{
+				MemberUserOid: string;
+				MemberName: string | null;
+				MemberEmail: string | null;
+			}>
+		)
 			.map((row) => ({
+				userOid: row.MemberUserOid?.trim() || '',
 				name: row.MemberName?.trim() || '',
 				email: row.MemberEmail?.trim() || null
 			}))
-			.filter((row) => Boolean(row.name));
+			.filter((row) => Boolean(row.userOid) && Boolean(row.name));
 	}
 
 	const result = await pool
@@ -263,6 +277,7 @@ async function getAffectedEventMemberNames(params: {
 		.input('endDate', endDateOnly)
 		.query(
 			`SELECT DISTINCT
+				sa.UserOid AS MemberUserOid,
 				COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
 				NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
 			 FROM dbo.ScheduleAssignments sa
@@ -280,9 +295,19 @@ async function getAffectedEventMemberNames(params: {
 			   AND (sa.EndDate IS NULL OR sa.EndDate >= @startDate)
 			 ORDER BY MemberName ASC;`
 		);
-	return (result.recordset as Array<{ MemberName: string | null; MemberEmail: string | null }>)
-		.map((row) => ({ name: row.MemberName?.trim() || '', email: row.MemberEmail?.trim() || null }))
-		.filter((row) => Boolean(row.name));
+	return (
+		result.recordset as Array<{
+			MemberUserOid: string;
+			MemberName: string | null;
+			MemberEmail: string | null;
+		}>
+	)
+		.map((row) => ({
+			userOid: row.MemberUserOid?.trim() || '',
+			name: row.MemberName?.trim() || '',
+			email: row.MemberEmail?.trim() || null
+		}))
+		.filter((row) => Boolean(row.userOid) && Boolean(row.name));
 }
 
 async function claimReminder(params: {
@@ -461,6 +486,7 @@ export async function dispatchDueScheduledEventReminders(): Promise<ScheduledRem
 							.map((email) => email.toLowerCase())
 					)
 				);
+				const recipientOids = Array.from(new Set(affectedUsers.map((member) => member.userOid)));
 				const affectedUserNames = affectedUsers.map((member) => member.name);
 				const targetMemberName =
 					affectedUserNames.length === 0
@@ -469,7 +495,7 @@ export async function dispatchDueScheduledEventReminders(): Promise<ScheduledRem
 							? affectedUserNames.join(', ')
 							: `${affectedUserNames.length} schedule members`;
 
-				if (intendedRecipients.length === 0) {
+				if (intendedRecipients.length === 0 && recipientOids.length === 0) {
 					summary.skippedReminders += 1;
 					continue;
 				}
@@ -478,6 +504,7 @@ export async function dispatchDueScheduledEventReminders(): Promise<ScheduledRem
 					scheduleName,
 					themeJson: eventRow.ScheduleThemeJson ?? null,
 					intendedRecipients,
+					recipientOids,
 					targetMemberName,
 					eventName,
 					date: dateLabel,

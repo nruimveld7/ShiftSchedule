@@ -759,6 +759,13 @@ BEGIN
     ADD ReminderDispatchStateJson nvarchar(max) NULL;
 END;
 
+IF COL_LENGTH('dbo.ScheduleEvents', 'RemindersHandled') IS NULL
+BEGIN
+    ALTER TABLE dbo.ScheduleEvents
+    ADD RemindersHandled bit NOT NULL
+        CONSTRAINT DF_ScheduleEvents_RemindersHandled DEFAULT 0;
+END;
+
 IF OBJECT_ID('dbo.CK_ScheduleEvents_ScheduledRemindersJson_IsJson', 'C') IS NULL
 AND COL_LENGTH('dbo.ScheduleEvents', 'ScheduledRemindersJson') IS NOT NULL
 BEGIN
@@ -786,6 +793,19 @@ BEGIN
         );
     ');
 END;
+
+UPDATE se
+SET RemindersHandled =
+    CASE
+        WHEN se.ScheduledRemindersJson IS NULL OR LTRIM(RTRIM(se.ScheduledRemindersJson)) = '' THEN 1
+        ELSE 0
+    END
+FROM dbo.ScheduleEvents se
+WHERE se.RemindersHandled IS NULL
+   OR (
+        se.RemindersHandled = 0
+        AND (se.ScheduledRemindersJson IS NULL OR LTRIM(RTRIM(se.ScheduledRemindersJson)) = '')
+   );
 
 IF OBJECT_ID('dbo.FK_ScheduleEvents_Shifts', 'F') IS NULL
 AND COL_LENGTH('dbo.ScheduleEvents', 'ShiftId') IS NOT NULL

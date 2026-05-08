@@ -69,6 +69,11 @@
 		scopeUserOid: string | null;
 	};
 	type PickerOption = { value: number | string; label: string; color?: string };
+	type ScheduleRefreshHint = {
+		invalidateCalendarDayDetails?: boolean;
+		startDate?: string | null;
+		endDate?: string | null;
+	};
 
 	export let groups: Group[] = [];
 	export let events: ScheduleEvent[] = [];
@@ -80,7 +85,7 @@
 	export let canMaintainTeam = false;
 	export let onTeamClick: () => void = () => {};
 	export let onEmployeeDoubleClick: (employee: Employee) => void = () => {};
-	export let onScheduleRefresh: () => void | Promise<void> = () => {};
+	export let onScheduleRefresh: (hint?: ScheduleRefreshHint) => void | Promise<void> = () => {};
 	export let selectedYear = new Date().getFullYear();
 	export let selectedMonthIndex = new Date().getMonth();
 	export let popupResetToken = 0;
@@ -396,9 +401,9 @@
 		return target;
 	}
 
-	function refreshScheduleInBackground() {
+	function refreshScheduleInBackground(hint: ScheduleRefreshHint = {}) {
 		try {
-			void onScheduleRefresh();
+			void onScheduleRefresh(hint);
 		} catch {
 			// Keep event operations successful even if background refresh fails.
 		}
@@ -1086,7 +1091,11 @@
 			memberEventsPopupMode = 'list';
 			resetAddEventForm();
 			scopedEventsCache.clear();
-			refreshScheduleInBackground();
+			refreshScheduleInBackground({
+				invalidateCalendarDayDetails: true,
+				startDate: addEventStartDate,
+				endDate: addEventEndDate
+			});
 			await loadScopedEvents();
 		} catch (error) {
 			addEventError = error instanceof Error ? error.message : 'Failed to save event';
@@ -1129,7 +1138,11 @@
 			memberEventsPopupMode = 'list';
 			resetAddEventForm();
 			scopedEventsCache.clear();
-			refreshScheduleInBackground();
+			refreshScheduleInBackground({
+				invalidateCalendarDayDetails: true,
+				startDate: addEventStartDate,
+				endDate: addEventEndDate
+			});
 			await loadScopedEvents();
 		} catch (error) {
 			addEventError = error instanceof Error ? error.message : 'Failed to remove event';
@@ -1985,29 +1998,26 @@
 		);
 		const verticalHeight = Math.max(verticalBottom - verticalTop, 0);
 
-		if (gridShellEl) {
-			const teamColumnRailToggleEl = gridWrapEl.querySelector<HTMLElement>('.teamColumnRailToggle');
-			const shellRect = gridShellEl.getBoundingClientRect();
-			if (teamColumnRailToggleEl) {
-				const railRect = teamColumnRailToggleEl.getBoundingClientRect();
-				const visibleRailTop = Math.max(railRect.top, rect.top, 0);
-				const visibleRailBottom = Math.min(railRect.bottom, rect.bottom, viewportHeight);
-				const fallbackVisibleTop = Math.max(rect.top, 0);
-				const fallbackVisibleBottom = Math.min(rect.bottom, viewportHeight);
-				const centerViewportY =
-					visibleRailBottom > visibleRailTop
-						? (visibleRailTop + visibleRailBottom) / 2
-						: fallbackVisibleBottom > fallbackVisibleTop
-							? (fallbackVisibleTop + fallbackVisibleBottom) / 2
-							: rect.top + headerRowHeight / 2;
-				teamColumnGlyphTopPx = clamp(
-					centerViewportY - shellRect.top,
-					0,
-					Math.max(shellRect.height, 0)
-				);
-			} else {
-				teamColumnGlyphTopPx = headerRowHeight / 2;
-			}
+		const teamColumnRailToggleEl = gridWrapEl.querySelector<HTMLElement>('.teamColumnRailToggle');
+		if (teamColumnRailToggleEl) {
+			const railRect = teamColumnRailToggleEl.getBoundingClientRect();
+			const visibleRailTop = Math.max(railRect.top, rect.top, 0);
+			const visibleRailBottom = Math.min(railRect.bottom, rect.bottom, viewportHeight);
+			const fallbackVisibleTop = Math.max(rect.top, 0);
+			const fallbackVisibleBottom = Math.min(rect.bottom, viewportHeight);
+			const centerViewportY =
+				visibleRailBottom > visibleRailTop
+					? (visibleRailTop + visibleRailBottom) / 2
+					: fallbackVisibleBottom > fallbackVisibleTop
+						? (fallbackVisibleTop + fallbackVisibleBottom) / 2
+						: rect.top + headerRowHeight / 2;
+			teamColumnGlyphTopPx = clamp(
+				centerViewportY - railRect.top,
+				0,
+				Math.max(railRect.height, 0)
+			);
+		} else {
+			teamColumnGlyphTopPx = headerRowHeight / 2;
 		}
 
 		horizontalRailStyle = `left:${horizontalLeft}px;top:${horizontalTop}px;width:${horizontalWidth}px;`;
@@ -2395,17 +2405,6 @@
 	style={gridShellStyle}
 	bind:this={gridShellEl}
 >
-	{#if showTeamColumnRailToggle}
-		<div class="teamColumnRailViewportGlyph" style={teamColumnGlyphStyle} aria-hidden="true">
-			<svg viewBox="0 0 24 24" aria-hidden="true">
-				{#if teamColumnCollapsed}
-					<path d="M9 5L16 12L9 19" />
-				{:else}
-					<path d="M15 5L8 12L15 19" />
-				{/if}
-			</svg>
-		</div>
-	{/if}
 	<div class="gridwrap" bind:this={gridWrapEl} on:scroll={onGridScroll}>
 		<div
 			class="grid"
@@ -2460,7 +2459,17 @@
 							toggleTeamColumnVisibility();
 						}
 					}}
-				></div>
+				>
+					<div class="teamColumnRailViewportGlyph" style={teamColumnGlyphStyle} aria-hidden="true">
+						<svg viewBox="0 0 24 24" aria-hidden="true">
+							{#if teamColumnCollapsed}
+								<path d="M9 5L16 12L9 19" />
+							{:else}
+								<path d="M15 5L8 12L15 19" />
+							{/if}
+						</svg>
+					</div>
+				</div>
 			{/if}
 
 			{#each days as day (day.day)}

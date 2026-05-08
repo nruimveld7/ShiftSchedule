@@ -1632,6 +1632,26 @@ body.teamShiftRowDragging {
   outline-offset: 2px;
 }
 
+.managerScheduleToggleBtn:disabled,
+.managerScheduleToggleBtn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: rgba(128, 132, 142, 0.18);
+  border-color: rgba(128, 132, 142, 0.45);
+  color: rgba(205, 210, 220, 0.62);
+  box-shadow: none;
+  filter: none;
+}
+
+.managerScheduleToggleBtn:disabled:hover,
+.managerScheduleToggleBtn[disabled]:hover {
+  background: rgba(128, 132, 142, 0.18);
+  border-color: rgba(128, 132, 142, 0.45);
+  color: rgba(205, 210, 220, 0.62);
+  box-shadow: none;
+  filter: none;
+}
+
 .managerStatusField {
   text-align: left;
   align-items: flex-start;
@@ -2199,6 +2219,26 @@ body.team-modal-open {
   background: linear-gradient(180deg, #de4444, #b33030);
   border-color: #761d1d;
   box-shadow: 0 0 0 1px rgba(222, 68, 68, 0.32);
+}
+
+:root[data-theme='light'] .managerScheduleToggleBtn:disabled,
+:root[data-theme='light'] .managerScheduleToggleBtn[disabled] {
+  opacity: 0.78;
+  cursor: not-allowed;
+  background: rgba(128, 132, 142, 0.18);
+  border-color: rgba(128, 132, 142, 0.45);
+  color: rgba(66, 72, 84, 0.92);
+  box-shadow: none;
+  filter: none;
+}
+
+:root[data-theme='light'] .managerScheduleToggleBtn:disabled:hover,
+:root[data-theme='light'] .managerScheduleToggleBtn[disabled]:hover {
+  background: rgba(128, 132, 142, 0.18);
+  border-color: rgba(128, 132, 142, 0.45);
+  color: rgba(66, 72, 84, 0.92);
+  box-shadow: none;
+  filter: none;
 }
 
 @media (max-width: 900px) {

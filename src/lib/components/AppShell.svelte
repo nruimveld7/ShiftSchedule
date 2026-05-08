@@ -26,6 +26,7 @@
 		ScheduleId: number;
 		Name: string;
 		RoleName: ScheduleRole;
+		IsBootstrapOnly?: boolean;
 		IsDefault: boolean;
 		IsActive: boolean;
 		ThemeJson?: string | null;
@@ -130,6 +131,11 @@
 		| 'secondaryGradient2';
 	type ThemeDraft = Record<ThemeFieldKey, string>;
 	type ThemePayload = Record<ThemeMode, ThemeDraft>;
+	type ScheduleRefreshHint = {
+		invalidateCalendarDayDetails?: boolean;
+		startDate?: string | null;
+		endDate?: string | null;
+	};
 	const dowLong = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 	const now = () => new Date();
@@ -675,12 +681,13 @@
 			.sort((left, right) => left.ScheduleId - right.ScheduleId)
 			.map((membership) =>
 				[
-					membership.ScheduleId,
-					membership.Name,
-					membership.RoleName,
-					membership.IsDefault ? '1' : '0',
-					membership.IsActive ? '1' : '0',
-					membership.ThemeJson ?? '',
+						membership.ScheduleId,
+						membership.Name,
+						membership.RoleName,
+						membership.IsBootstrapOnly ? '1' : '0',
+						membership.IsDefault ? '1' : '0',
+						membership.IsActive ? '1' : '0',
+						membership.ThemeJson ?? '',
 					normalizeVersionAt(membership.VersionAt)
 				].join(':')
 			)
@@ -697,7 +704,14 @@
 	function accessLevelSignature(memberships: ScheduleMembership[]): string {
 		return [...memberships]
 			.sort((left, right) => left.ScheduleId - right.ScheduleId)
-			.map((membership) => [membership.ScheduleId, membership.RoleName, membership.IsActive ? '1' : '0'].join(':'))
+			.map((membership) =>
+				[
+					membership.ScheduleId,
+					membership.RoleName,
+					membership.IsBootstrapOnly ? '1' : '0',
+					membership.IsActive ? '1' : '0'
+				].join(':')
+			)
 			.join('|');
 	}
 
@@ -719,12 +733,10 @@
 		nextActiveScheduleId: number | null
 	) {
 		scheduleMemberships = nextMemberships;
-		if (nextActiveScheduleId !== null) {
-			activeScheduleId = nextActiveScheduleId;
-		}
+		activeScheduleId = nextActiveScheduleId;
 		scheduleName = resolveScheduleNameFromMemberships(
 			nextMemberships,
-			nextActiveScheduleId ?? activeScheduleId,
+			nextActiveScheduleId,
 			scheduleName
 		);
 	}
@@ -735,6 +747,27 @@
 		closeDisplayNameEditor(true);
 		onboardingOpen = false;
 		popupResetToken += 1;
+	}
+
+	function invalidateCalendarDayDetailsCacheForHint(hint: ScheduleRefreshHint) {
+		if (!hint.invalidateCalendarDayDetails) return;
+		const startDate =
+			typeof hint.startDate === 'string' && isIsoDate(hint.startDate) ? hint.startDate : null;
+		const endDate = typeof hint.endDate === 'string' && isIsoDate(hint.endDate) ? hint.endDate : null;
+		if (!startDate && !endDate) {
+			calendarDayDetailsCache = {};
+			return;
+		}
+		let rangeStart = startDate ?? endDate ?? '';
+		let rangeEnd = endDate ?? startDate ?? '';
+		if (rangeEnd < rangeStart) {
+			[rangeStart, rangeEnd] = [rangeEnd, rangeStart];
+		}
+		calendarDayDetailsCache = Object.fromEntries(
+			Object.entries(calendarDayDetailsCache).filter(
+				([dayIso]) => dayIso < rangeStart || dayIso > rangeEnd
+			)
+		);
 	}
 
 	async function refreshScheduleContextInBackground(): Promise<boolean> {
@@ -2911,7 +2944,8 @@
 		}
 	}
 
-	async function refreshScheduleInBackground() {
+	async function refreshScheduleInBackground(hint: ScheduleRefreshHint = {}) {
+		invalidateCalendarDayDetailsCacheForHint(hint);
 		await Promise.all([
 			loadScheduleGroupsForMonth(selectedYear, selectedMonthIndex),
 			refreshScheduleContextInBackground()

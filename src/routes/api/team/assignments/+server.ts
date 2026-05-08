@@ -1588,6 +1588,7 @@ async function upsertAssignment({
 							scheduleName: emailContext.scheduleName,
 							themeJson: emailContext.scheduleThemeJson,
 							intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+							recipientOids: [userOid],
 							targetMemberName: emailContext.targetDisplayName,
 							date: startDate,
 							previousShift,
@@ -1741,11 +1742,11 @@ export const DELETE: RequestHandler = async (event) => {
 					   AND et.ShiftId = sut.ShiftId
 					   AND et.IsActive = 1
 					   AND et.DeletedAt IS NULL
-					 WHERE ScheduleId = @scheduleId
-					   AND UserOid = @userOid
-					   AND StartDate = @changeStartDate
-					   AND IsActive = 1
-					   AND DeletedAt IS NULL;`
+					 WHERE sut.ScheduleId = @scheduleId
+					   AND sut.UserOid = @userOid
+					   AND sut.StartDate = @changeStartDate
+					   AND sut.IsActive = 1
+					   AND sut.DeletedAt IS NULL;`
 				);
 			const row = rowResult.recordset?.[0] as
 				| {
@@ -1822,6 +1823,7 @@ export const DELETE: RequestHandler = async (event) => {
 							scheduleName: emailContext.scheduleName,
 							themeJson: emailContext.scheduleThemeJson,
 							intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+							recipientOids: [userOid],
 							targetMemberName: emailContext.targetDisplayName,
 							date: changeStartDate,
 							previousShift,
@@ -1939,6 +1941,7 @@ export const DELETE: RequestHandler = async (event) => {
 						scheduleName: emailContext.scheduleName,
 						themeJson: emailContext.scheduleThemeJson,
 						intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+						recipientOids: [userOid],
 						targetMemberName: emailContext.targetDisplayName,
 						date: notifyDate,
 						previousShift,

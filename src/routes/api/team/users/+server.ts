@@ -327,7 +327,7 @@ export const GET: RequestHandler = async (event) => {
 		userOid: row.UserOid,
 		name: row.Name?.trim() || row.UserOid,
 		displayName: row.DisplayName?.trim() || '',
-		email: row.Email?.trim() || '',
+		email: row.Email?.trim() || 'Not Available',
 		role: row.RoleName,
 		versionStamp: userVersionStamp(row.RoleName, row.RoleGrantedAt)
 	}));
@@ -466,6 +466,7 @@ export const POST: RequestHandler = async (event) => {
 					scheduleName: emailContext.scheduleName,
 					themeJson: emailContext.scheduleThemeJson,
 					intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+					recipientOids: [targetUserOid],
 					targetMemberName: emailContext.targetDisplayName,
 					authorizedByName: emailContext.actorDisplayName,
 					status: role,
@@ -584,6 +585,7 @@ export const PATCH: RequestHandler = async (event) => {
 							scheduleName: emailContext.scheduleName,
 							themeJson: emailContext.scheduleThemeJson,
 							intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+							recipientOids: [targetUserOid],
 							targetMemberName: emailContext.targetDisplayName,
 							authorizedByName: emailContext.actorDisplayName,
 							status: nextRole,
@@ -820,6 +822,7 @@ export const DELETE: RequestHandler = async (event) => {
 					scheduleName: emailContext.scheduleName,
 					themeJson: emailContext.scheduleThemeJson,
 					intendedRecipients: emailContext.targetEmail ? [emailContext.targetEmail] : [],
+					recipientOids: [targetUserOid],
 					targetMemberName: emailContext.targetDisplayName,
 					triggeringUserName: emailContext.actorDisplayName,
 					delegatedAccessToken

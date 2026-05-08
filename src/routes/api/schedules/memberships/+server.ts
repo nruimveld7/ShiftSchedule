@@ -9,6 +9,7 @@ type ScheduleMembership = {
 	ScheduleId: number;
 	Name: string;
 	RoleName: ScheduleRole;
+	IsBootstrapOnly: boolean;
 	IsDefault: boolean;
 	IsActive: boolean;
 	ThemeJson: string | null;
