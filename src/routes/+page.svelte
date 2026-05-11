@@ -102,8 +102,8 @@
 	$: score = snake.length;
 	$: runPeakLength = Math.max(runPeakLength, snake.length);
 
-	const GOOD_ITEM_TTL_MS = 7000;
-	const BAD_ITEM_TTL_MS = 6000;
+	const GOOD_ITEM_TTL_MS = 11000;
+	const BAD_ITEM_TTL_MS = 10000;
 	const GOOD_RESPAWN_MS = 700;
 	const BAD_RESPAWN_MS = 1200;
 	const BASE_TICK_MS = 420;

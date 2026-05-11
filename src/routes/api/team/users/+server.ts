@@ -758,6 +758,70 @@ export const DELETE: RequestHandler = async (event) => {
 				);
 		}
 
+		// Remove the target user from schedule-scoped reminder recipient lists so
+		// deleted/inactive users are not retained in event-code defaults or upcoming event reminders.
+		await new sql.Request(tx)
+			.input('scheduleId', ctx.scheduleId)
+			.input('targetUserOid', targetUserOid)
+			.input('today', today)
+			.query(
+				`IF COL_LENGTH('dbo.EventCodes', 'ReminderRecipientsJson') IS NOT NULL
+				 BEGIN
+				   UPDATE ec
+					  SET ReminderRecipientsJson = CASE
+							WHEN nextRecipients.NewJson IS NULL OR nextRecipients.NewJson = '[]' THEN NULL
+							ELSE nextRecipients.NewJson
+						  END
+					 FROM dbo.EventCodes ec
+					 OUTER APPLY (
+					   SELECT
+						 '[' + STRING_AGG('"' + STRING_ESCAPE(value, 'json') + '"', ',') + ']' AS NewJson
+					   FROM OPENJSON(ec.ReminderRecipientsJson)
+					   WHERE LOWER(LTRIM(RTRIM([value]))) <> LOWER(@targetUserOid)
+					 ) nextRecipients
+					 WHERE ec.ScheduleId = @scheduleId
+					   AND ec.DeletedAt IS NULL
+					   AND ec.ReminderRecipientsJson IS NOT NULL
+					   AND ISJSON(ec.ReminderRecipientsJson) = 1
+					   AND EXISTS (
+						 SELECT 1
+						 FROM OPENJSON(ec.ReminderRecipientsJson) existingRecipients
+						 WHERE LOWER(LTRIM(RTRIM(existingRecipients.[value]))) = LOWER(@targetUserOid)
+					   );
+				 END;
+
+				 IF COL_LENGTH('dbo.ScheduleEvents', 'ReminderRecipientsJson') IS NOT NULL
+				 BEGIN
+				   UPDATE se
+					  SET ReminderRecipientsJson = CASE
+							WHEN nextRecipients.NewJson IS NULL OR nextRecipients.NewJson = '[]' THEN NULL
+							ELSE nextRecipients.NewJson
+						  END
+					 FROM dbo.ScheduleEvents se
+					 OUTER APPLY (
+					   SELECT
+						 '[' + STRING_AGG('"' + STRING_ESCAPE(value, 'json') + '"', ',') + ']' AS NewJson
+					   FROM OPENJSON(se.ReminderRecipientsJson)
+					   WHERE LOWER(LTRIM(RTRIM([value]))) <> LOWER(@targetUserOid)
+					 ) nextRecipients
+					 WHERE se.ScheduleId = @scheduleId
+					   AND se.IsActive = 1
+					   AND se.DeletedAt IS NULL
+					   AND se.EndDate >= @today
+					   AND se.ReminderRecipientsJson IS NOT NULL
+					   AND ISJSON(se.ReminderRecipientsJson) = 1
+					   AND (
+						 COL_LENGTH('dbo.ScheduleEvents', 'RemindersHandled') IS NULL
+						 OR ISNULL(se.RemindersHandled, 0) = 0
+					   )
+					   AND EXISTS (
+						 SELECT 1
+						 FROM OPENJSON(se.ReminderRecipientsJson) existingRecipients
+						 WHERE LOWER(LTRIM(RTRIM(existingRecipients.[value]))) = LOWER(@targetUserOid)
+					   );
+				 END;`
+			);
+
 		const activeMembershipResult = await new sql.Request(tx)
 			.input('targetUserOid', targetUserOid)
 			.query(

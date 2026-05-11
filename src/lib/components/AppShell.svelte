@@ -66,6 +66,7 @@
 			hour: number;
 			meridiem: 'AM' | 'PM';
 		}>;
+		reminderRecipients?: string[];
 	};
 	type CalendarDayIndicator = {
 		eventId: number;
@@ -115,6 +116,12 @@
 			hour: number;
 			meridiem: 'AM' | 'PM';
 		}>;
+		reminderRecipients?: string[];
+	};
+	type CalendarRecipientUser = {
+		userOid: string;
+		name: string;
+		email: string;
 	};
 	type ThemeFieldKey =
 		| 'background'
@@ -385,6 +392,14 @@
 	let calendarAddReminderImmediate = false;
 	let calendarAddReminderScheduled = false;
 	let calendarScheduledReminderDrafts: ScheduledReminderDraft[] = [];
+	let calendarReminderRecipientOids: string[] = [];
+	let calendarRecipientUsers: CalendarRecipientUser[] = [];
+	let calendarRecipientUsersLoading = false;
+	let calendarRecipientUsersError = '';
+	let calendarRecipientPopoverOpen = false;
+	let calendarRecipientPopoverX = 0;
+	let calendarRecipientPopoverY = 0;
+	let calendarRecipientPopoverEl: HTMLDivElement | null = null;
 	let nextCalendarScheduledReminderDraftId = 1;
 	let calendarAddEventError = '';
 	let calendarEventSaveInProgress = false;
@@ -413,6 +428,7 @@
 	const reminderUnitOptions = ['days', 'weeks', 'months'];
 	const reminderMeridiemOptions = ['AM', 'PM'];
 	const MAX_SCHEDULED_REMINDERS = 4;
+	const MAX_EVENT_REMINDER_RECIPIENTS = 10;
 
 	function normalizeHexColor(value: string, fallback: string): string {
 		const trimmed = value.trim().toLowerCase();
@@ -1220,6 +1236,24 @@
 		return lines;
 	})();
 	$: calendarScheduledReminderSummaryTitle = `${calendarScheduledReminderSummaryLines.length} Scheduled Reminder${calendarScheduledReminderSummaryLines.length === 1 ? '' : 's'}`;
+	$: calendarReminderRecipientInfoByOid = new Map(
+		calendarRecipientUsers.map((user) => [
+			user.userOid,
+			{ fullName: user.name, email: user.email || '' }
+		] as const)
+	);
+	$: calendarReminderRecipientCards = calendarReminderRecipientOids.map((userOid) => {
+		const info = calendarReminderRecipientInfoByOid.get(userOid);
+		return {
+			userOid,
+			fullName: info?.fullName ?? userOid,
+			email: info?.email ?? ''
+		};
+	});
+	$: calendarReminderGridSlots = Array.from({ length: MAX_EVENT_REMINDER_RECIPIENTS }, (_, index) => index);
+	$: calendarRecipientPickerItems = calendarRecipientUsers
+		.filter((user) => !calendarReminderRecipientOids.includes(user.userOid))
+		.map((user) => ({ value: user.userOid, label: user.name }));
 	$: calendarAddEventPrimaryButtonLabel = calendarEventSaveInProgress
 		? calendarPopupMode === 'edit'
 			? 'Saving...'
@@ -2018,7 +2052,8 @@
 			calendarCustomDisplayModePickerOpen ||
 			calendarAddStartDatePickerOpen ||
 			calendarAddEndDatePickerOpen ||
-			calendarPopupScopeOptionsOpen
+			calendarPopupScopeOptionsOpen ||
+			calendarRecipientPopoverOpen
 		) {
 			return true;
 		}
@@ -2034,6 +2069,7 @@
 			calendarCustomDisplayModePickerOpen = false;
 			calendarAddStartDatePickerOpen = false;
 			calendarAddEndDatePickerOpen = false;
+			calendarRecipientPopoverOpen = false;
 			return;
 		}
 		closeCalendarDayPopup();
@@ -2041,10 +2077,21 @@
 
 	function handleCalendarPopupMouseDown(event: MouseEvent) {
 		event.stopPropagation();
-		if (!calendarPopupScopeOptionsOpen || !calendarPopupScopeComboEl) return;
 		const target = event.target as Node | null;
-		if (target && !calendarPopupScopeComboEl.contains(target)) {
+		if (
+			calendarPopupScopeOptionsOpen &&
+			calendarPopupScopeComboEl &&
+			target &&
+			!calendarPopupScopeComboEl.contains(target)
+		) {
 			closeCalendarPopupScopeOptions();
+		}
+		if (
+			calendarRecipientPopoverOpen &&
+			target &&
+			(!calendarRecipientPopoverEl || !calendarRecipientPopoverEl.contains(target))
+		) {
+			calendarRecipientPopoverOpen = false;
 		}
 	}
 
@@ -2060,6 +2107,8 @@
 		calendarAddReminderImmediate = false;
 		calendarAddReminderScheduled = false;
 		calendarScheduledReminderDrafts = [createDefaultCalendarScheduledReminderDraft()];
+		calendarReminderRecipientOids = [];
+		calendarRecipientPopoverOpen = false;
 		calendarAddEventError = '';
 		calendarPopupEditingEventId = null;
 		calendarPopupEditingEventVersionStamp = '';
@@ -2111,14 +2160,70 @@
 		});
 	}
 
+	async function loadCalendarRecipientUsers(forceReload = false) {
+		if (!canMaintainTeam || calendarRecipientUsersLoading) return;
+		if (!forceReload && calendarRecipientUsers.length > 0) return;
+		calendarRecipientUsersLoading = true;
+		calendarRecipientUsersError = '';
+		try {
+			const result = await fetchWithAuthRedirect(`${base}/api/team/users`, { method: 'GET' }, base);
+			if (!result) return;
+			if (!result.ok) {
+				throw new Error(await parseErrorMessage(result, 'Failed to load schedule users'));
+			}
+			const data = (await result.json()) as {
+				users?: Array<{ userOid: string; displayName?: string; name: string; email?: string }>;
+			};
+			calendarRecipientUsers = (Array.isArray(data.users) ? data.users : []).map((user) => ({
+				userOid: user.userOid,
+				name: user.displayName?.trim() || user.name,
+				email: user.email?.trim() || ''
+			}));
+		} catch (error) {
+			calendarRecipientUsersError =
+				error instanceof Error ? error.message : 'Failed to load schedule users';
+		} finally {
+			calendarRecipientUsersLoading = false;
+		}
+	}
+
+	function openCalendarReminderRecipientPopover(slotIndex: number, event: MouseEvent) {
+		if (slotIndex < 0 || slotIndex >= MAX_EVENT_REMINDER_RECIPIENTS) return;
+		if (slotIndex < calendarReminderRecipientOids.length) return;
+		const menuWidth = 280;
+		const menuHeight = 280;
+		const viewportWidth = typeof window === 'undefined' ? 1200 : window.innerWidth;
+		const viewportHeight = typeof window === 'undefined' ? 900 : window.innerHeight;
+		calendarRecipientPopoverX = clamp(event.clientX + 8, 12, Math.max(12, viewportWidth - menuWidth - 12));
+		calendarRecipientPopoverY = clamp(event.clientY + 8, 12, Math.max(12, viewportHeight - menuHeight - 12));
+		calendarRecipientPopoverOpen = true;
+	}
+
+	function addCalendarReminderRecipient(userOid: string) {
+		const trimmed = userOid.trim();
+		if (!trimmed) return;
+		if (calendarReminderRecipientOids.includes(trimmed)) return;
+		if (calendarReminderRecipientOids.length >= MAX_EVENT_REMINDER_RECIPIENTS) return;
+		calendarReminderRecipientOids = [...calendarReminderRecipientOids, trimmed];
+		calendarRecipientPopoverOpen = false;
+	}
+
+	function removeCalendarReminderRecipient(userOid: string) {
+		calendarReminderRecipientOids = calendarReminderRecipientOids.filter((oid) => oid !== userOid);
+	}
+
 	function applyCalendarReminderDefaultsFromEventCode(eventCode: EventCodeOption | null) {
 		if (!eventCode) {
 			calendarAddReminderImmediate = false;
 			calendarAddReminderScheduled = false;
 			calendarScheduledReminderDrafts = [createDefaultCalendarScheduledReminderDraft()];
+			calendarReminderRecipientOids = [];
 			return;
 		}
 		calendarAddReminderImmediate = Boolean(eventCode.notifyImmediately);
+		calendarReminderRecipientOids = Array.isArray(eventCode.reminderRecipients)
+			? eventCode.reminderRecipients.filter((value) => typeof value === 'string').slice(0, 10)
+			: [];
 		const reminders = Array.isArray(eventCode.scheduledReminders) ? eventCode.scheduledReminders : [];
 		if (reminders.length > 0) {
 			calendarAddReminderScheduled = true;
@@ -2137,7 +2242,6 @@
 
 	function handleCalendarEventCodeSelection(nextValue: string | number) {
 		calendarAddEventCodeId = String(nextValue);
-		if (calendarPopupMode !== 'add') return;
 		if (calendarAddEventCodeId === 'custom') {
 			applyCalendarReminderDefaultsFromEventCode(null);
 			return;
@@ -2175,6 +2279,7 @@
 						hour: number;
 						meridiem: 'AM' | 'PM';
 					}>;
+					reminderRecipients?: string[];
 				}>;
 			};
 			calendarEventCodeOptions = (Array.isArray(data.eventCodes) ? data.eventCodes : [])
@@ -2189,6 +2294,9 @@
 					notifyImmediately: Boolean(eventCode.notifyImmediately),
 					scheduledReminders: Array.isArray(eventCode.scheduledReminders)
 						? eventCode.scheduledReminders
+						: [],
+					reminderRecipients: Array.isArray(eventCode.reminderRecipients)
+						? eventCode.reminderRecipients
 						: []
 				}));
 		} catch (error) {
@@ -2259,6 +2367,7 @@
 		closeCalendarPopupScopeOptions();
 		calendarPopupUserShiftPickerOpen = false;
 		calendarAddEventError = '';
+		calendarRecipientPopoverOpen = false;
 	}
 
 	async function openCalendarAddEventView() {
@@ -2269,13 +2378,15 @@
 			calendarPopupUserOid = null;
 			calendarPopupUserShiftId = null;
 			closeCalendarPopupScopeOptions();
-			resetCalendarEventForm();
+		resetCalendarEventForm();
 		await loadCalendarActiveEventCodes(true);
+		await loadCalendarRecipientUsers(true);
 	}
 
 	async function openCalendarEditEventView(eventRow: CalendarScopedEventEntry) {
 		if (!canMaintainTeam || !calendarPopupDayIso) return;
 		await loadCalendarActiveEventCodes(true);
+		await loadCalendarRecipientUsers(true);
 		const detailedEvents = await fetchCalendarScopedEvents(
 			eventRow.scopeType,
 			eventRow.employeeTypeId,
@@ -2340,6 +2451,9 @@
 			calendarAddReminderScheduled = false;
 			calendarScheduledReminderDrafts = [createDefaultCalendarScheduledReminderDraft()];
 		}
+		calendarReminderRecipientOids = Array.isArray(detailedEvent.reminderRecipients)
+			? detailedEvent.reminderRecipients.filter((value) => typeof value === 'string').slice(0, 10)
+			: [];
 	}
 
 		function cancelCalendarAddEdit() {
@@ -2451,7 +2565,8 @@
 						hour: reminderDraft.hour,
 						meridiem: reminderDraft.meridiem
 					}))
-				: []
+				: [],
+			reminderRecipients: calendarReminderRecipientOids
 		};
 
 		if (customCode) {
@@ -3877,6 +3992,61 @@
 										</div>
 									{/if}
 								</div>
+								{#if calendarAddReminderImmediate || calendarAddReminderScheduled}
+									<div class="memberEventMailingListSection">
+										<div class="memberEventCustomTitle">Mailing List</div>
+										<div class="memberEventRecipientGrid">
+											{#each calendarReminderGridSlots as slotIndex}
+												{#if slotIndex < calendarReminderRecipientCards.length}
+													{@const recipient = calendarReminderRecipientCards[slotIndex]}
+													<div
+														class="memberEventRecipientCard"
+														title={
+															recipient.email
+																? `${recipient.fullName} (${recipient.email})`
+																: recipient.fullName
+														}
+													>
+														<div class="memberEventRecipientText">
+															<div class="memberEventRecipientName" title={recipient.fullName}>
+																{recipient.fullName}
+															</div>
+															<div class="memberEventRecipientEmail" title={recipient.email}>
+																{recipient.email || 'No email'}
+															</div>
+														</div>
+														<button
+															type="button"
+															class="memberEventRecipientRemoveBtn"
+															on:click={() => removeCalendarReminderRecipient(recipient.userOid)}
+															aria-label={`Remove ${recipient.fullName}`}
+														>
+															<svg viewBox="0 0 24 24" aria-hidden="true">
+																<path d="M6 6l12 12M18 6L6 18" />
+															</svg>
+														</button>
+													</div>
+												{:else}
+													<button
+														type="button"
+														class="memberEventRecipientPlaceholder"
+														disabled={calendarReminderRecipientOids.length >= MAX_EVENT_REMINDER_RECIPIENTS}
+														on:click={(event) =>
+															openCalendarReminderRecipientPopover(slotIndex, event)}
+														aria-label="Add reminder recipient"
+													>
+														<svg viewBox="0 0 24 24" aria-hidden="true">
+															<path d="M12 5v14M5 12h14" />
+														</svg>
+													</button>
+												{/if}
+											{/each}
+										</div>
+										{#if calendarRecipientUsersError}
+											<div class="memberEventError" role="alert">{calendarRecipientUsersError}</div>
+										{/if}
+									</div>
+								{/if}
 								<label class="memberEventField">
 									<span class="memberEventFieldLabel">Comments</span>
 									<textarea
@@ -3886,6 +4056,34 @@
 										bind:value={calendarAddEventComments}
 									></textarea>
 								</label>
+								{#if calendarRecipientPopoverOpen}
+									<div
+										class="memberEventRecipientPopover"
+										role="listbox"
+										aria-label="Select reminder recipient"
+										style={`left:${Math.round(calendarRecipientPopoverX)}px;top:${Math.round(calendarRecipientPopoverY)}px;`}
+										bind:this={calendarRecipientPopoverEl}
+									>
+										<div class="memberEventRecipientPopoverScroll">
+											{#if calendarRecipientUsersLoading}
+												<div class="memberEventRecipientPopoverEmpty">Loading users...</div>
+											{:else if calendarRecipientPickerItems.length === 0}
+												<div class="memberEventRecipientPopoverEmpty">No available users</div>
+											{:else}
+												{#each calendarRecipientPickerItems as item (item.value)}
+													<button
+														type="button"
+														class="memberEventRecipientPopoverItem"
+														role="option"
+														on:click={() => addCalendarReminderRecipient(String(item.value))}
+													>
+														{item.label}
+													</button>
+												{/each}
+											{/if}
+										</div>
+									</div>
+								{/if}
 								{#if calendarEventCodesError}
 									<div class="memberEventError" role="alert">{calendarEventCodesError}</div>
 								{/if}

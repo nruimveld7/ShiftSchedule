@@ -16,11 +16,13 @@ type EventCodeRow = {
 	IsActive: boolean;
 	NotifyImmediately: boolean | null;
 	ScheduledRemindersJson: string | null;
+	ReminderRecipientsJson: string | null;
 	ModifiedAt?: Date | string | null;
 };
 
 type EventCodesCapabilities = {
 	hasReminderColumns: boolean;
+	hasReminderRecipientColumn: boolean;
 };
 
 const allowedDisplayModes = new Set<EventCodeDisplayMode>([
@@ -61,7 +63,8 @@ async function getEventCodesCapabilities(
 	);
 	return {
 		hasReminderColumns:
-			columns.has('NotifyImmediately') && columns.has('ScheduledRemindersJson')
+			columns.has('NotifyImmediately') && columns.has('ScheduledRemindersJson'),
+		hasReminderRecipientColumn: columns.has('ReminderRecipientsJson')
 	};
 }
 
@@ -185,6 +188,88 @@ function parseScheduledRemindersJson(value: string | null): ReminderDraft[] {
 	}
 }
 
+function cleanReminderRecipientOids(value: unknown): string[] {
+	if (value === null || value === undefined || value === '') return [];
+	if (!Array.isArray(value)) {
+		throw error(400, 'Reminder recipients are invalid');
+	}
+	const normalized: string[] = [];
+	const seen = new Set<string>();
+	for (const entry of value) {
+		const raw =
+			typeof entry === 'string'
+				? entry
+				: entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).userOid === 'string'
+					? ((entry as Record<string, unknown>).userOid as string)
+					: '';
+		const userOid = raw.trim();
+		if (!userOid) continue;
+		if (seen.has(userOid)) continue;
+		seen.add(userOid);
+		normalized.push(userOid);
+	}
+	if (normalized.length > 10) {
+		throw error(400, 'Reminder recipients cannot exceed 10 users');
+	}
+	return normalized;
+}
+
+function reminderRecipientsToJson(value: string[]): string | null {
+	if (value.length === 0) return null;
+	return JSON.stringify(value);
+}
+
+function parseReminderRecipientOids(value: string | null): string[] {
+	if (!value) return [];
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		const normalized: string[] = [];
+		const seen = new Set<string>();
+		for (const entry of parsed) {
+			if (typeof entry !== 'string') continue;
+			const userOid = entry.trim();
+			if (!userOid || seen.has(userOid)) continue;
+			seen.add(userOid);
+			normalized.push(userOid);
+			if (normalized.length >= 10) break;
+		}
+		return normalized;
+	} catch {
+		return [];
+	}
+}
+
+async function ensureRecipientsBelongToSchedule(params: {
+	pool: Awaited<ReturnType<typeof GetPool>>;
+	scheduleId: number;
+	recipientOids: string[];
+}): Promise<void> {
+	const { pool, scheduleId, recipientOids } = params;
+	if (recipientOids.length === 0) return;
+	const result = await pool
+		.request()
+		.input('scheduleId', scheduleId)
+		.input('recipientOidsJson', JSON.stringify(recipientOids))
+		.query(
+			`SELECT su.UserOid
+			 FROM OPENJSON(@recipientOidsJson)
+			      WITH (UserOid nvarchar(64) '$') r
+			 INNER JOIN dbo.ScheduleUsers su
+			   ON su.ScheduleId = @scheduleId
+			  AND su.UserOid = r.UserOid
+			  AND su.IsActive = 1
+			  AND su.DeletedAt IS NULL;`
+		);
+	const valid = new Set<string>(
+		(result.recordset as Array<{ UserOid: string }>).map((row) => row.UserOid?.trim()).filter(Boolean) as string[]
+	);
+	const invalid = recipientOids.filter((oid) => !valid.has(oid));
+	if (invalid.length > 0) {
+		throw error(400, 'One or more reminder recipients are not active schedule users');
+	}
+}
+
 function cleanEventCodeId(value: unknown): number {
 	const parsed = Number(value);
 	if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -227,6 +312,9 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 	const selectScheduledRemindersJson = capabilities.hasReminderColumns
 		? 'ScheduledRemindersJson'
 		: 'CAST(NULL AS nvarchar(max)) AS ScheduledRemindersJson';
+	const selectReminderRecipientsJson = capabilities.hasReminderRecipientColumn
+		? 'ReminderRecipientsJson'
+		: 'CAST(NULL AS nvarchar(max)) AS ReminderRecipientsJson';
 	const result = await pool.request().input('scheduleId', scheduleId).query(
 		`SELECT
 			EventCodeId,
@@ -237,7 +325,8 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 			IsActive,
 			COALESCE(UpdatedAt, CreatedAt) AS ModifiedAt,
 			${selectNotifyImmediately},
-			${selectScheduledRemindersJson}
+			${selectScheduledRemindersJson},
+			${selectReminderRecipientsJson}
 		 FROM dbo.EventCodes
 		 WHERE ScheduleId = @scheduleId
 		   AND DeletedAt IS NULL
@@ -253,6 +342,7 @@ export const GET: RequestHandler = async ({ locals, cookies }) => {
 		isActive: Boolean(row.IsActive),
 		notifyImmediately: Boolean(row.NotifyImmediately),
 		scheduledReminders: parseScheduledRemindersJson(row.ScheduledRemindersJson),
+		reminderRecipients: parseReminderRecipientOids(row.ReminderRecipientsJson),
 		versionStamp: `${Number(row.EventCodeId)}|${toDateTimeIso(row.ModifiedAt) ?? '0'}`
 	}));
 
@@ -274,7 +364,9 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
 	const isActive = cleanIsActive(body?.isActive);
 	const notifyImmediately = cleanNotifyImmediately(body?.notifyImmediately);
 	const scheduledRemindersJson = cleanScheduledRemindersJson(body?.scheduledReminders);
+	const reminderRecipientOids = cleanReminderRecipientOids(body?.reminderRecipients);
 	const capabilities = await getEventCodesCapabilities(pool);
+	await ensureRecipientsBelongToSchedule({ pool, scheduleId, recipientOids: reminderRecipientOids });
 
 	const duplicateResult = await pool
 		.request()
@@ -326,6 +418,10 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
 		insertColumns.splice(7, 0, 'NotifyImmediately', 'ScheduledRemindersJson');
 		insertValues.splice(7, 0, '@notifyImmediately', '@scheduledRemindersJson');
 	}
+	if (capabilities.hasReminderRecipientColumn) {
+		insertColumns.splice(9, 0, 'ReminderRecipientsJson');
+		insertValues.splice(9, 0, '@reminderRecipientsJson');
+	}
 
 	await pool
 		.request()
@@ -337,6 +433,7 @@ export const POST: RequestHandler = async ({ locals, cookies, request }) => {
 		.input('isActive', isActive)
 		.input('notifyImmediately', notifyImmediately)
 		.input('scheduledRemindersJson', scheduledRemindersJson)
+		.input('reminderRecipientsJson', reminderRecipientsToJson(reminderRecipientOids))
 		.input('sortOrder', nextSortOrder)
 		.input('actorOid', actorOid)
 		.query(
@@ -367,7 +464,9 @@ export const PATCH: RequestHandler = async ({ locals, cookies, request }) => {
 	const isActive = cleanIsActive(body?.isActive);
 	const notifyImmediately = cleanNotifyImmediately(body?.notifyImmediately);
 	const scheduledRemindersJson = cleanScheduledRemindersJson(body?.scheduledReminders);
+	const reminderRecipientOids = cleanReminderRecipientOids(body?.reminderRecipients);
 	const capabilities = await getEventCodesCapabilities(pool);
+	await ensureRecipientsBelongToSchedule({ pool, scheduleId, recipientOids: reminderRecipientOids });
 
 	const existsResult = await pool
 		.request()
@@ -422,6 +521,9 @@ export const PATCH: RequestHandler = async ({ locals, cookies, request }) => {
 	if (capabilities.hasReminderColumns) {
 		setClauses.push('NotifyImmediately = @notifyImmediately', 'ScheduledRemindersJson = @scheduledRemindersJson');
 	}
+	if (capabilities.hasReminderRecipientColumn) {
+		setClauses.push('ReminderRecipientsJson = @reminderRecipientsJson');
+	}
 
 	await pool
 		.request()
@@ -434,6 +536,7 @@ export const PATCH: RequestHandler = async ({ locals, cookies, request }) => {
 		.input('isActive', isActive)
 		.input('notifyImmediately', notifyImmediately)
 		.input('scheduledRemindersJson', scheduledRemindersJson)
+		.input('reminderRecipientsJson', reminderRecipientsToJson(reminderRecipientOids))
 		.input('actorOid', actorOid)
 		.query(
 			`UPDATE dbo.EventCodes

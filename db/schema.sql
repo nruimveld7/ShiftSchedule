@@ -658,6 +658,12 @@ BEGIN
     ADD ScheduledRemindersJson nvarchar(max) NULL;
 END;
 
+IF COL_LENGTH('dbo.EventCodes', 'ReminderRecipientsJson') IS NULL
+BEGIN
+    ALTER TABLE dbo.EventCodes
+    ADD ReminderRecipientsJson nvarchar(max) NULL;
+END;
+
 IF OBJECT_ID('dbo.CK_EventCodes_ScheduledRemindersJson_IsJson', 'C') IS NULL
 AND COL_LENGTH('dbo.EventCodes', 'ScheduledRemindersJson') IS NOT NULL
 BEGIN
@@ -668,6 +674,20 @@ BEGIN
             ScheduledRemindersJson IS NULL
             OR ISJSON(ScheduledRemindersJson) = 1
             OR LTRIM(RTRIM(ScheduledRemindersJson)) = ''''
+        );
+    ');
+END;
+
+IF OBJECT_ID('dbo.CK_EventCodes_ReminderRecipientsJson_IsJson', 'C') IS NULL
+AND COL_LENGTH('dbo.EventCodes', 'ReminderRecipientsJson') IS NOT NULL
+BEGIN
+    EXEC(N'
+        ALTER TABLE dbo.EventCodes
+        ADD CONSTRAINT CK_EventCodes_ReminderRecipientsJson_IsJson
+        CHECK (
+            ReminderRecipientsJson IS NULL
+            OR ISJSON(ReminderRecipientsJson) = 1
+            OR LTRIM(RTRIM(ReminderRecipientsJson)) = ''''
         );
     ');
 END;
@@ -796,6 +816,12 @@ BEGIN
     ADD ScheduledRemindersJson nvarchar(max) NULL;
 END;
 
+IF COL_LENGTH('dbo.ScheduleEvents', 'ReminderRecipientsJson') IS NULL
+BEGIN
+    ALTER TABLE dbo.ScheduleEvents
+    ADD ReminderRecipientsJson nvarchar(max) NULL;
+END;
+
 IF COL_LENGTH('dbo.ScheduleEvents', 'ReminderDispatchStateJson') IS NULL
 BEGIN
     ALTER TABLE dbo.ScheduleEvents
@@ -819,6 +845,20 @@ BEGIN
             ScheduledRemindersJson IS NULL
             OR ISJSON(ScheduledRemindersJson) = 1
             OR LTRIM(RTRIM(ScheduledRemindersJson)) = ''''
+        );
+    ');
+END;
+
+IF OBJECT_ID('dbo.CK_ScheduleEvents_ReminderRecipientsJson_IsJson', 'C') IS NULL
+AND COL_LENGTH('dbo.ScheduleEvents', 'ReminderRecipientsJson') IS NOT NULL
+BEGIN
+    EXEC(N'
+        ALTER TABLE dbo.ScheduleEvents
+        ADD CONSTRAINT CK_ScheduleEvents_ReminderRecipientsJson_IsJson
+        CHECK (
+            ReminderRecipientsJson IS NULL
+            OR ISJSON(ReminderRecipientsJson) = 1
+            OR LTRIM(RTRIM(ReminderRecipientsJson)) = ''''
         );
     ');
 END;

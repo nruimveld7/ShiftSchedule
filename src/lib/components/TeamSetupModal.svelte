@@ -102,6 +102,7 @@
 			hour: number;
 			meridiem: 'AM' | 'PM';
 		}>;
+		reminderRecipients?: string[];
 	};
 	type EventCodeReminderDraft = {
 		id: number;
@@ -278,7 +279,13 @@
 	let addEventCodeReminderImmediate = false;
 	let addEventCodeReminderScheduled = false;
 	let eventCodeReminderDrafts: EventCodeReminderDraft[] = [];
+	let eventCodeReminderRecipientOids: string[] = [];
+	let eventCodeRecipientPickerOpen = false;
 	let nextEventCodeReminderDraftId = 1;
+	let eventCodeRecipientSlotIndex: number | null = null;
+	let eventCodeRecipientPopoverX = 0;
+	let eventCodeRecipientPopoverY = 0;
+	let eventCodeRecipientPopoverEl: HTMLDivElement | null = null;
 	let eventCodeDisplayModePickerOpen = false;
 	let eventCodeActionError = '';
 	let eventCodeActionLoading = false;
@@ -331,6 +338,7 @@
 		{ id: 'eventCodes', label: 'Event Codes' }
 	];
 	const EVENT_CODE_MAX_REMINDERS = 4;
+	const EVENT_CODE_MAX_RECIPIENTS = 10;
 	const eventCodeReminderAmountOptions = Array.from({ length: 31 }, (_, index) => index);
 	const eventCodeReminderHourOptions = Array.from({ length: 13 }, (_, index) => index);
 	const eventCodeReminderUnitOptions = ['days', 'weeks', 'months'];
@@ -505,6 +513,7 @@
 			shiftEndDatePickerOpen ||
 			shiftsMonthPickerOpen ||
 			eventCodeDisplayModePickerOpen ||
+			eventCodeRecipientPickerOpen ||
 			assignmentUserResultsOpen ||
 			assignmentsMonthPickerOpen ||
 			assignmentStartDatePickerOpen ||
@@ -518,6 +527,11 @@
 	function handleWindowKeydown(event: KeyboardEvent) {
 		if (!open) return;
 		if (event.key === 'Escape') {
+			if (eventCodeRecipientPickerOpen) {
+				event.preventDefault();
+				setEventCodeRecipientPickerOpen(false);
+				return;
+			}
 			if (confirmDialog) {
 				event.preventDefault();
 				closeConfirmDialog(confirmDialog.cancelOptionId);
@@ -1511,6 +1525,55 @@
 		addEventCodeReminderImmediate = false;
 		addEventCodeReminderScheduled = false;
 		eventCodeReminderDrafts = [createDefaultEventCodeReminderDraft()];
+		eventCodeReminderRecipientOids = [];
+		eventCodeRecipientPickerOpen = false;
+		eventCodeRecipientSlotIndex = null;
+		eventCodeRecipientPopoverX = 0;
+		eventCodeRecipientPopoverY = 0;
+	}
+
+	function removeEventCodeReminderRecipient(userOid: string) {
+		eventCodeReminderRecipientOids = eventCodeReminderRecipientOids.filter((oid) => oid !== userOid);
+	}
+
+	function openEventCodeRecipientPicker(slotIndex: number, event: MouseEvent) {
+		if (slotIndex < 0 || slotIndex >= EVENT_CODE_MAX_RECIPIENTS) return;
+		if (slotIndex < eventCodeReminderRecipientOids.length) return;
+		eventCodeRecipientSlotIndex = slotIndex;
+		const menuWidth = 280;
+		const menuHeight = 280;
+		const viewportWidth = typeof window === 'undefined' ? 1200 : window.innerWidth;
+		const viewportHeight = typeof window === 'undefined' ? 900 : window.innerHeight;
+		const nextX = clamp(event.clientX + 8, 12, Math.max(12, viewportWidth - menuWidth - 12));
+		const nextY = clamp(event.clientY + 8, 12, Math.max(12, viewportHeight - menuHeight - 12));
+		eventCodeRecipientPopoverX = nextX;
+		eventCodeRecipientPopoverY = nextY;
+		eventCodeRecipientPickerOpen = true;
+	}
+
+	function setEventCodeRecipientPickerOpen(next: boolean) {
+		eventCodeRecipientPickerOpen = next;
+		if (!next) eventCodeRecipientSlotIndex = null;
+	}
+
+	function addEventCodeReminderRecipient(userOid: string) {
+		const trimmed = userOid.trim();
+		if (!trimmed) return;
+		if (eventCodeReminderRecipientOids.includes(trimmed)) return;
+		if (eventCodeReminderRecipientOids.length >= EVENT_CODE_MAX_RECIPIENTS) return;
+		eventCodeReminderRecipientOids = [...eventCodeReminderRecipientOids, trimmed];
+		eventCodeRecipientPickerOpen = false;
+		eventCodeRecipientSlotIndex = null;
+	}
+
+	function userInitials(name: string): string {
+		const tokens = name
+			.trim()
+			.split(/\s+/)
+			.filter(Boolean);
+		if (tokens.length === 0) return '?';
+		if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+		return `${tokens[0][0] ?? ''}${tokens[1][0] ?? ''}`.toUpperCase();
 	}
 
 	function addEventCodeReminderDraft() {
@@ -1603,6 +1666,11 @@
 			addEventCodeReminderScheduled = false;
 			eventCodeReminderDrafts = [createDefaultEventCodeReminderDraft()];
 		}
+		eventCodeReminderRecipientOids = Array.isArray(eventCode.reminderRecipients)
+			? eventCode.reminderRecipients.filter((value) => typeof value === 'string').slice(0, 10)
+			: [];
+		eventCodeRecipientPickerOpen = false;
+		eventCodeRecipientSlotIndex = null;
 		eventCodeDisplayModePickerOpen = false;
 		eventCodeActionError = '';
 		eventCodeActionLoading = false;
@@ -1649,6 +1717,7 @@
 						hour: number;
 						meridiem: 'AM' | 'PM';
 					}>;
+					reminderRecipients?: string[];
 				}>;
 			};
 			const scope = currentScheduleScopeKey();
@@ -1711,7 +1780,8 @@
 							hour: reminderDraft.hour,
 							meridiem: reminderDraft.meridiem
 						}))
-					: []
+					: [],
+				reminderRecipients: eventCodeReminderRecipientOids
 			};
 			const result = await fetchWithAuthRedirect(`${base}/api/team/event-codes`, {
 				method: isEdit ? 'PATCH' : 'POST',
@@ -3307,6 +3377,8 @@
 		addEventCodeDisplayMode = 'Schedule Overlay';
 		addEventCodeColor = '#22c55e';
 		addEventCodeIsActive = true;
+		eventCodeRecipientPickerOpen = false;
+		eventCodeRecipientSlotIndex = null;
 		eventCodeDisplayModePickerOpen = false;
 		eventCodeActionError = '';
 		eventCodeActionLoading = false;
@@ -3838,6 +3910,12 @@
 		) {
 			closeAssignmentUserResults();
 		}
+		if (
+			eventCodeRecipientPickerOpen &&
+			(!eventCodeRecipientPopoverEl || !eventCodeRecipientPopoverEl.contains(target))
+		) {
+			setEventCodeRecipientPickerOpen(false);
+		}
 	}
 
 	function clamp(value: number, min: number, max: number): number {
@@ -4072,6 +4150,34 @@
 		return lines;
 	})();
 	$: eventCodeReminderSummaryTitle = `${eventCodeReminderSummaryLines.length} Scheduled Reminder${eventCodeReminderSummaryLines.length === 1 ? '' : 's'}`;
+	$: eventCodeRecipientInfoByOid = new Map(
+		sortedUsers.map((user) => [
+			user.userOid,
+			{
+				fullName: user.displayName?.trim() || user.name,
+				email: user.email?.trim() || ''
+			}
+		] as const)
+	);
+	$: eventCodeReminderRecipientCards = eventCodeReminderRecipientOids.map((userOid) => {
+		const info = eventCodeRecipientInfoByOid.get(userOid);
+		const fullName = info?.fullName || userOid;
+		return {
+			userOid,
+			fullName,
+			email: info?.email || ''
+		};
+	});
+	$: eventCodeReminderGridSlots = Array.from(
+		{ length: EVENT_CODE_MAX_RECIPIENTS },
+		(_, index) => index
+	);
+	$: eventCodeRecipientPickerItems = sortedUsers
+		.filter((user) => !eventCodeReminderRecipientOids.includes(user.userOid))
+		.map((user) => ({
+			value: user.userOid,
+			label: user.displayName?.trim() || user.name
+		})) satisfies PickerItem[];
 	$: shiftPatternItems = [
 		{ value: '', label: 'Unassigned' },
 		...patterns.map((pattern) => ({ value: String(pattern.patternId), label: pattern.name }))
@@ -6347,6 +6453,90 @@
 													</div>
 												{/if}
 											</div>
+											{#if addEventCodeReminderImmediate || addEventCodeReminderScheduled}
+												<div class="eventCodeMailingListSection">
+													<div class="eventCodeReminderTitle">Mailing List</div>
+													<div class="eventCodeRecipientSection">
+														<div class="eventCodeRecipientGrid">
+															{#each eventCodeReminderGridSlots as slotIndex}
+																{#if slotIndex < eventCodeReminderRecipientCards.length}
+																	{@const recipient = eventCodeReminderRecipientCards[slotIndex]}
+																	<div
+																		class="eventCodeRecipientCard"
+																		title={
+																			recipient.email
+																				? `${recipient.fullName} (${recipient.email})`
+																				: recipient.fullName
+																		}
+																		aria-label={`Recipient ${recipient.fullName}`}
+																	>
+																		<div class="eventCodeRecipientText">
+																			<div class="eventCodeRecipientName" title={recipient.fullName}>
+																				{recipient.fullName}
+																			</div>
+																			<div class="eventCodeRecipientEmail" title={recipient.email}>
+																				{recipient.email || 'No email'}
+																			</div>
+																		</div>
+																		<button
+																			type="button"
+																			class="eventCodeRecipientRemoveBtn"
+																			on:click={() =>
+																				removeEventCodeReminderRecipient(recipient.userOid)}
+																			aria-label={`Remove ${recipient.fullName}`}
+																		>
+																			<svg viewBox="0 0 24 24" aria-hidden="true">
+																				<path d="M6 6l12 12M18 6L6 18" />
+																			</svg>
+																		</button>
+																	</div>
+																{:else}
+																	<button
+																		type="button"
+																		class="eventCodeRecipientPlaceholder"
+																		disabled={eventCodeReminderRecipientOids.length >= EVENT_CODE_MAX_RECIPIENTS}
+																		on:click={(event) =>
+																			openEventCodeRecipientPicker(slotIndex, event)}
+																		aria-label="Add reminder recipient"
+																	>
+																		<svg viewBox="0 0 24 24" aria-hidden="true">
+																			<path d="M12 5v14M5 12h14" />
+																		</svg>
+																	</button>
+																{/if}
+															{/each}
+														</div>
+													</div>
+												</div>
+											{/if}
+											{#if eventCodeRecipientPickerOpen && eventCodeRecipientSlotIndex !== null}
+												<div
+													class="eventCodeRecipientPopover"
+													role="listbox"
+													aria-label="Select reminder recipient"
+													style={`left:${Math.round(eventCodeRecipientPopoverX)}px;top:${Math.round(eventCodeRecipientPopoverY)}px;`}
+													bind:this={eventCodeRecipientPopoverEl}
+												>
+													<div class="eventCodeRecipientPopoverScroll">
+														{#if eventCodeRecipientPickerItems.length === 0}
+															<div class="eventCodeRecipientPopoverEmpty">
+																No available users
+															</div>
+														{:else}
+															{#each eventCodeRecipientPickerItems as item (item.value)}
+																<button
+																	type="button"
+																	class="eventCodeRecipientPopoverItem"
+																	role="option"
+																	on:click={() => addEventCodeReminderRecipient(String(item.value))}
+																>
+																	{item.label}
+																</button>
+															{/each}
+														{/if}
+													</div>
+												</div>
+											{/if}
 										</div>
 
 										<div class="setupActions">

@@ -17,6 +17,7 @@ type ReminderDraft = {
 type CandidateEventRow = {
 	EventId: number;
 	ScheduleId: number;
+	EventCodeId: number | null;
 	UserOid: string | null;
 	ShiftId: number | null;
 	StartDate: Date | string;
@@ -29,6 +30,7 @@ type CandidateEventRow = {
 	CoverageCode: string | null;
 	CustomName: string | null;
 	CustomCode: string | null;
+	ReminderRecipientsJson: string | null;
 };
 
 type AffectedEventMember = {
@@ -310,6 +312,69 @@ async function getAffectedEventMemberNames(params: {
 		.filter((row) => Boolean(row.userOid) && Boolean(row.name));
 }
 
+function parseReminderRecipientOids(value: string | null): string[] {
+	if (!value) return [];
+	try {
+		const parsed = JSON.parse(value) as unknown;
+		if (!Array.isArray(parsed)) return [];
+		const output: string[] = [];
+		const seen = new Set<string>();
+		for (const entry of parsed) {
+			if (typeof entry !== 'string') continue;
+			const userOid = entry.trim();
+			if (!userOid || seen.has(userOid)) continue;
+			seen.add(userOid);
+			output.push(userOid);
+			if (output.length >= 10) break;
+		}
+		return output;
+	} catch {
+		return [];
+	}
+}
+
+async function getEventCodeReminderRecipients(params: {
+	pool: Awaited<ReturnType<typeof GetPool>>;
+	scheduleId: number;
+	recipientOids: string[];
+}): Promise<AffectedEventMember[]> {
+	const { pool, scheduleId, recipientOids } = params;
+	if (recipientOids.length === 0) return [];
+	const result = await pool
+		.request()
+		.input('scheduleId', scheduleId)
+		.input('recipientOidsJson', JSON.stringify(recipientOids))
+		.query(
+			`SELECT
+				su.UserOid AS MemberUserOid,
+				COALESCE(NULLIF(LTRIM(RTRIM(u.DisplayName)), ''), NULLIF(LTRIM(RTRIM(u.FullName)), ''), u.UserOid) AS MemberName,
+				NULLIF(LTRIM(RTRIM(u.Email)), '') AS MemberEmail
+			 FROM OPENJSON(@recipientOidsJson)
+			      WITH (UserOid nvarchar(64) '$') r
+			 INNER JOIN dbo.ScheduleUsers su
+			   ON su.ScheduleId = @scheduleId
+			  AND su.UserOid = r.UserOid
+			  AND su.IsActive = 1
+			  AND su.DeletedAt IS NULL
+			 INNER JOIN dbo.Users u
+			   ON u.UserOid = su.UserOid
+			 ORDER BY MemberName ASC;`
+		);
+	return (
+		result.recordset as Array<{
+			MemberUserOid: string;
+			MemberName: string | null;
+			MemberEmail: string | null;
+		}>
+	)
+		.map((row) => ({
+			userOid: row.MemberUserOid?.trim() || '',
+			name: row.MemberName?.trim() || '',
+			email: row.MemberEmail?.trim() || null
+		}))
+		.filter((row) => Boolean(row.userOid) && Boolean(row.name));
+}
+
 async function claimReminder(params: {
 	pool: Awaited<ReturnType<typeof GetPool>>;
 	eventId: number;
@@ -397,6 +462,7 @@ export async function dispatchDueScheduledEventReminders(): Promise<ScheduledRem
 		`SELECT
 			se.EventId,
 			se.ScheduleId,
+			se.EventCodeId,
 			se.UserOid,
 			se.ShiftId,
 			se.StartDate,
@@ -407,6 +473,7 @@ export async function dispatchDueScheduledEventReminders(): Promise<ScheduledRem
 			s.ThemeJson AS ScheduleThemeJson,
 			ec.Label AS CoverageLabel,
 			ec.Code AS CoverageCode,
+			COALESCE(se.ReminderRecipientsJson, ec.ReminderRecipientsJson) AS ReminderRecipientsJson,
 			se.CustomName,
 			se.CustomCode
 		 FROM dbo.ScheduleEvents se
@@ -478,15 +545,23 @@ export async function dispatchDueScheduledEventReminders(): Promise<ScheduledRem
 					startDate: eventRow.StartDate,
 					endDate: eventRow.EndDate
 				});
+				const reminderRecipients = await getEventCodeReminderRecipients({
+					pool,
+					scheduleId: Number(eventRow.ScheduleId),
+					recipientOids: parseReminderRecipientOids(eventRow.ReminderRecipientsJson)
+				});
+				const allRecipients = [...affectedUsers, ...reminderRecipients];
 				const intendedRecipients = Array.from(
 					new Set(
-						affectedUsers
+						allRecipients
 							.map((member) => member.email?.trim())
 							.filter((email): email is string => Boolean(email))
 							.map((email) => email.toLowerCase())
 					)
 				);
-				const recipientOids = Array.from(new Set(affectedUsers.map((member) => member.userOid)));
+				const recipientOids = Array.from(
+					new Set(allRecipients.map((member) => member.userOid).filter(Boolean))
+				);
 				const affectedUserNames = affectedUsers.map((member) => member.name);
 				const targetMemberName =
 					affectedUserNames.length === 0

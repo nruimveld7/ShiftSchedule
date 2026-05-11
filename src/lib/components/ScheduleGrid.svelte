@@ -39,6 +39,7 @@
 			hour: number;
 			meridiem: 'AM' | 'PM';
 		}>;
+		reminderRecipients?: string[];
 	};
 	type ScopedEventEntry = {
 		eventId: number;
@@ -60,6 +61,12 @@
 			hour: number;
 			meridiem: 'AM' | 'PM';
 		}>;
+		reminderRecipients?: string[];
+	};
+	type RecipientUser = {
+		userOid: string;
+		name: string;
+		email: string;
 	};
 	type HoverCellScope = {
 		day: MonthDay;
@@ -193,6 +200,14 @@
 	let addReminderImmediate = false;
 	let addReminderScheduled = false;
 	let scheduledReminderDrafts: ScheduledReminderDraft[] = [];
+	let reminderRecipientOids: string[] = [];
+	let recipientUsers: RecipientUser[] = [];
+	let recipientUsersLoading = false;
+	let recipientUsersError = '';
+	let recipientPopoverOpen = false;
+	let recipientPopoverX = 0;
+	let recipientPopoverY = 0;
+	let recipientPopoverEl: HTMLDivElement | null = null;
 	let nextScheduledReminderDraftId = 1;
 	let addEventError = '';
 	let hoverTooltipOpen = false;
@@ -221,6 +236,7 @@
 	let lastHeaderTouchTapAtMs = 0;
 	let suppressHeaderClickDay: number | null = null;
 	const MAX_SCHEDULED_REMINDERS = 4;
+	const MAX_EVENT_REMINDER_RECIPIENTS = 10;
 
 	const eventDisplayModeItems: PickerOption[] = [
 		{ value: 'Schedule Overlay', label: 'Schedule Overlay' },
@@ -932,6 +948,7 @@
 						hour: number;
 						meridiem: 'AM' | 'PM';
 					}>;
+					reminderRecipients?: string[];
 				}>;
 			};
 			eventCodeOptions = (Array.isArray(data.eventCodes) ? data.eventCodes : [])
@@ -946,6 +963,9 @@
 					notifyImmediately: Boolean(eventCode.notifyImmediately),
 					scheduledReminders: Array.isArray(eventCode.scheduledReminders)
 						? eventCode.scheduledReminders
+						: [],
+					reminderRecipients: Array.isArray(eventCode.reminderRecipients)
+						? eventCode.reminderRecipients
 						: []
 				}));
 		} catch (error) {
@@ -973,6 +993,8 @@
 		addReminderImmediate = false;
 		addReminderScheduled = false;
 		scheduledReminderDrafts = [createDefaultScheduledReminderDraft()];
+		reminderRecipientOids = [];
+		recipientPopoverOpen = false;
 		addEventError = '';
 		editingEventId = null;
 		editingEventVersionStamp = '';
@@ -1031,10 +1053,14 @@
 			addReminderImmediate = false;
 			addReminderScheduled = false;
 			scheduledReminderDrafts = [createDefaultScheduledReminderDraft()];
+			reminderRecipientOids = [];
 			return;
 		}
 
 		addReminderImmediate = Boolean(eventCode.notifyImmediately);
+		reminderRecipientOids = Array.isArray(eventCode.reminderRecipients)
+			? eventCode.reminderRecipients.filter((value) => typeof value === 'string').slice(0, 10)
+			: [];
 		const reminders = Array.isArray(eventCode.scheduledReminders)
 			? eventCode.scheduledReminders
 			: [];
@@ -1056,7 +1082,6 @@
 
 	function handleEventCodeSelection(nextValue: string | number) {
 		addEventCodeId = String(nextValue);
-		if (memberEventsPopupMode !== 'add') return;
 		if (addEventCodeId === 'custom') {
 			applyReminderDefaultsFromEventCode(null);
 			return;
@@ -1074,11 +1099,13 @@
 		customGroupEditingEventCommonKey = null;
 		resetAddEventForm();
 		await loadActiveEventCodes(true);
+		await loadRecipientUsers(true);
 	}
 
 	async function openEditEventView(eventRow: ScopedEventEntry) {
 		if (!canMaintainTeam) return;
 		await loadActiveEventCodes(true);
+		await loadRecipientUsers(true);
 
 		memberEventsPopupMode = 'edit';
 		customGroupEditingEventCommonKey = memberEventsPopupIsCustomGroup
@@ -1122,7 +1149,7 @@
 		customDisplayModePickerOpen = false;
 		addStartDatePickerOpen = false;
 		addEndDatePickerOpen = false;
-		addReminderImmediate = false;
+		addReminderImmediate = Boolean(eventRow.notifyImmediately);
 		const reminders = Array.isArray(eventRow.scheduledReminders) ? eventRow.scheduledReminders : [];
 		if (reminders.length > 0) {
 			addReminderScheduled = true;
@@ -1137,6 +1164,61 @@
 			addReminderScheduled = false;
 			scheduledReminderDrafts = [createDefaultScheduledReminderDraft()];
 		}
+		reminderRecipientOids = Array.isArray(eventRow.reminderRecipients)
+			? eventRow.reminderRecipients.filter((value) => typeof value === 'string').slice(0, 10)
+			: [];
+	}
+
+	async function loadRecipientUsers(forceReload = false) {
+		if (!canMaintainTeam || recipientUsersLoading) return;
+		if (!forceReload && recipientUsers.length > 0) return;
+		recipientUsersLoading = true;
+		recipientUsersError = '';
+		try {
+			const result = await fetchWithAuthRedirect(`${base}/api/team/users`, { method: 'GET' }, base);
+			if (!result) return;
+			if (!result.ok) {
+				throw new Error(await parseErrorMessage(result, 'Failed to load schedule users'));
+			}
+			const data = (await result.json()) as {
+				users?: Array<{ userOid: string; displayName?: string; name: string; email?: string }>;
+			};
+			recipientUsers = (Array.isArray(data.users) ? data.users : []).map((user) => ({
+				userOid: user.userOid,
+				name: user.displayName?.trim() || user.name,
+				email: user.email?.trim() || ''
+			}));
+		} catch (error) {
+			recipientUsersError =
+				error instanceof Error ? error.message : 'Failed to load schedule users';
+		} finally {
+			recipientUsersLoading = false;
+		}
+	}
+
+	function openReminderRecipientPopover(slotIndex: number, event: MouseEvent) {
+		if (slotIndex < 0 || slotIndex >= MAX_EVENT_REMINDER_RECIPIENTS) return;
+		if (slotIndex < reminderRecipientOids.length) return;
+		const menuWidth = 280;
+		const menuHeight = 280;
+		const viewportWidth = typeof window === 'undefined' ? 1200 : window.innerWidth;
+		const viewportHeight = typeof window === 'undefined' ? 900 : window.innerHeight;
+		recipientPopoverX = clamp(event.clientX + 8, 12, Math.max(12, viewportWidth - menuWidth - 12));
+		recipientPopoverY = clamp(event.clientY + 8, 12, Math.max(12, viewportHeight - menuHeight - 12));
+		recipientPopoverOpen = true;
+	}
+
+	function addReminderRecipient(userOid: string) {
+		const trimmed = userOid.trim();
+		if (!trimmed) return;
+		if (reminderRecipientOids.includes(trimmed)) return;
+		if (reminderRecipientOids.length >= MAX_EVENT_REMINDER_RECIPIENTS) return;
+		reminderRecipientOids = [...reminderRecipientOids, trimmed];
+		recipientPopoverOpen = false;
+	}
+
+	function removeReminderRecipient(userOid: string) {
+		reminderRecipientOids = reminderRecipientOids.filter((oid) => oid !== userOid);
 	}
 
 	function cancelAddEvent() {
@@ -1245,7 +1327,8 @@
 						hour: reminderDraft.hour,
 						meridiem: reminderDraft.meridiem
 					}))
-				: []
+				: [],
+			reminderRecipients: reminderRecipientOids
 		};
 
 		if (customCode) {
@@ -1777,7 +1860,8 @@
 			eventCodePickerOpen ||
 			customDisplayModePickerOpen ||
 			addStartDatePickerOpen ||
-			addEndDatePickerOpen
+			addEndDatePickerOpen ||
+			recipientPopoverOpen
 		) {
 			return true;
 		}
@@ -1786,8 +1870,26 @@
 
 	function handleMemberEventsBackdropMouseDown(event: MouseEvent) {
 		if (event.target !== event.currentTarget) return;
-		if (hasOpenMemberEventsPopover()) return;
+		if (hasOpenMemberEventsPopover()) {
+			eventCodePickerOpen = false;
+			customDisplayModePickerOpen = false;
+			addStartDatePickerOpen = false;
+			addEndDatePickerOpen = false;
+			recipientPopoverOpen = false;
+			return;
+		}
 		closeMemberEventsPopup();
+	}
+
+	function handleMemberEventsModalMouseDown(event: MouseEvent) {
+		const target = event.target as Node | null;
+		if (
+			recipientPopoverOpen &&
+			target &&
+			(!recipientPopoverEl || !recipientPopoverEl.contains(target))
+		) {
+			recipientPopoverOpen = false;
+		}
 	}
 
 	function refreshBandMeasurements(
@@ -1949,6 +2051,21 @@
 		return lines;
 	})();
 	$: scheduledReminderSummaryTitle = `${scheduledReminderSummaryLines.length} Scheduled Reminder${scheduledReminderSummaryLines.length === 1 ? '' : 's'}`;
+	$: reminderRecipientInfoByOid = new Map(
+		recipientUsers.map((user) => [user.userOid, { fullName: user.name, email: user.email || '' }] as const)
+	);
+	$: reminderRecipientCards = reminderRecipientOids.map((userOid) => {
+		const info = reminderRecipientInfoByOid.get(userOid);
+		return {
+			userOid,
+			fullName: info?.fullName ?? userOid,
+			email: info?.email ?? ''
+		};
+	});
+	$: reminderGridSlots = Array.from({ length: MAX_EVENT_REMINDER_RECIPIENTS }, (_, index) => index);
+	$: recipientPickerItems = recipientUsers
+		.filter((user) => !reminderRecipientOids.includes(user.userOid))
+		.map((user) => ({ value: user.userOid, label: user.name }));
 
 	$: selectedCustomDisplayModeLabel =
 		eventDisplayModeItems.find((item) => item.value === addCustomEventDisplayMode)?.label ??
@@ -3191,6 +3308,7 @@
 				aria-modal="true"
 				aria-labelledby="member-events-modal-title"
 				bind:this={memberEventsModalEl}
+				on:mousedown={handleMemberEventsModalMouseDown}
 			>
 				<div
 					class="memberEventsModalScroll"
@@ -3637,6 +3755,61 @@
 								</div>
 							{/if}
 
+							{#if addReminderImmediate || addReminderScheduled}
+								<div class="memberEventMailingListSection">
+									<div class="memberEventCustomTitle">Mailing List</div>
+									<div class="memberEventRecipientGrid">
+										{#each reminderGridSlots as slotIndex}
+											{#if slotIndex < reminderRecipientCards.length}
+												{@const recipient = reminderRecipientCards[slotIndex]}
+												<div
+													class="memberEventRecipientCard"
+													title={
+														recipient.email
+															? `${recipient.fullName} (${recipient.email})`
+															: recipient.fullName
+													}
+												>
+													<div class="memberEventRecipientText">
+														<div class="memberEventRecipientName" title={recipient.fullName}>
+															{recipient.fullName}
+														</div>
+														<div class="memberEventRecipientEmail" title={recipient.email}>
+															{recipient.email || 'No email'}
+														</div>
+													</div>
+													<button
+														type="button"
+														class="memberEventRecipientRemoveBtn"
+														on:click={() => removeReminderRecipient(recipient.userOid)}
+														aria-label={`Remove ${recipient.fullName}`}
+													>
+														<svg viewBox="0 0 24 24" aria-hidden="true">
+															<path d="M6 6l12 12M18 6L6 18" />
+														</svg>
+													</button>
+												</div>
+											{:else}
+												<button
+													type="button"
+													class="memberEventRecipientPlaceholder"
+													disabled={reminderRecipientOids.length >= MAX_EVENT_REMINDER_RECIPIENTS}
+													on:click={(event) => openReminderRecipientPopover(slotIndex, event)}
+													aria-label="Add reminder recipient"
+												>
+													<svg viewBox="0 0 24 24" aria-hidden="true">
+														<path d="M12 5v14M5 12h14" />
+													</svg>
+												</button>
+											{/if}
+										{/each}
+									</div>
+									{#if recipientUsersError}
+										<div class="memberEventError" role="alert">{recipientUsersError}</div>
+									{/if}
+								</div>
+							{/if}
+
 							<label class="memberEventField">
 								<span class="memberEventFieldLabel">Comments</span>
 								<textarea
@@ -3646,6 +3819,34 @@
 									bind:value={addEventComments}
 								></textarea>
 							</label>
+							{#if recipientPopoverOpen}
+								<div
+									class="memberEventRecipientPopover"
+									role="listbox"
+									aria-label="Select reminder recipient"
+									style={`left:${Math.round(recipientPopoverX)}px;top:${Math.round(recipientPopoverY)}px;`}
+									bind:this={recipientPopoverEl}
+								>
+									<div class="memberEventRecipientPopoverScroll">
+										{#if recipientUsersLoading}
+											<div class="memberEventRecipientPopoverEmpty">Loading users...</div>
+										{:else if recipientPickerItems.length === 0}
+											<div class="memberEventRecipientPopoverEmpty">No available users</div>
+										{:else}
+											{#each recipientPickerItems as item (item.value)}
+												<button
+													type="button"
+													class="memberEventRecipientPopoverItem"
+													role="option"
+													on:click={() => addReminderRecipient(String(item.value))}
+												>
+													{item.label}
+												</button>
+											{/each}
+										{/if}
+									</div>
+								</div>
+							{/if}
 
 							{#if eventCodesError}
 								<div class="memberEventError" role="alert">{eventCodesError}</div>
