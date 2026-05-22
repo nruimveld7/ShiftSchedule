@@ -4,7 +4,7 @@ import { readSession } from '$lib/server/auth';
 import { getAccessState } from '$lib/server/access';
 import { isDatabaseConnectionError } from '$lib/server/db';
 
-const PUBLIC_PATHS = ['/auth/login', '/auth/callback', '/auth/error', '/favicon.ico'];
+const PUBLIC_PATHS = ['/auth/login', '/auth/callback', '/auth/error', '/auth/logout', '/favicon.ico'];
 const NOTIFICATIONS_PATH = '/Notifications';
 const UNAUTHORIZED_PATH = '/unauthorized';
 const SETUP_PATH = '/setup';

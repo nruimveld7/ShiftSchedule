@@ -39,6 +39,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 			userRole: null,
 			scheduleMemberships: [] as ScheduleMembership[],
 			currentUserOid: null,
+			currentUserName: null as string | null,
+			currentUserEmail: null as string | null,
 			collapsedGroupsBySchedule: {},
 			themePreference: 'system' as ThemePreference,
 			onboarding: {
@@ -111,6 +113,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 			userRole: null,
 			scheduleMemberships,
 			currentUserOid: user.id,
+			currentUserName: user.name ?? null,
+			currentUserEmail: user.email ?? null,
 			collapsedGroupsBySchedule,
 			themePreference,
 			onboarding: {
@@ -139,6 +143,8 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		userRole: activeMembership?.RoleName ?? null,
 		scheduleMemberships,
 		currentUserOid: user.id,
+		currentUserName: user.name ?? null,
+		currentUserEmail: user.email ?? null,
 		collapsedGroupsBySchedule,
 		themePreference,
 		onboarding: {

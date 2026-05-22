@@ -849,6 +849,32 @@ export async function tryGetSessionAccessTokenFromCookies(cookies: Cookies): Pro
 	}
 }
 
+export async function clearSession(cookies: RequestEvent['cookies']): Promise<void> {
+	const token = cookies.get(SESSION_COOKIE);
+	if (token) {
+		await ensureSessionTable();
+		const pool = await GetPool();
+		await pool
+			.request()
+			.input('sessionId', token)
+			.query('DELETE FROM dbo.UserSessions WHERE SessionId = @sessionId;');
+	}
+
+	cookies.set(SESSION_COOKIE, '', {
+		httpOnly: true,
+		secure: COOKIE_SECURE,
+		sameSite: 'lax',
+		path: '/',
+		maxAge: 0
+	});
+
+	const clearOpts = authCookieOptions(0);
+	cookies.set(AUTH_STATE_COOKIE, '', clearOpts);
+	cookies.set(AUTH_NONCE_COOKIE, '', clearOpts);
+	cookies.set(AUTH_VERIFIER_COOKIE, '', clearOpts);
+	cookies.set(AUTH_PENDING_COOKIE, '', clearOpts);
+}
+
 export async function getActiveScheduleId(
 	cookies: RequestEvent['cookies']
 ): Promise<number | null> {

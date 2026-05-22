@@ -53,6 +53,8 @@
 		userRole: ScheduleRole | null;
 		scheduleMemberships: ScheduleMembership[];
 		currentUserOid: string | null;
+		currentUserName: string | null;
+		currentUserEmail: string | null;
 		collapsedGroupsBySchedule: Record<number, Record<string, boolean>>;
 		themePreference: ThemePreference;
 		onboarding: {
@@ -695,6 +697,8 @@
 		{canAssignManagerRole}
 		{canOpenScheduleSetup}
 		currentUserOid={data.currentUserOid ?? ''}
+		currentUserName={data.currentUserName}
+		currentUserEmail={data.currentUserEmail}
 		collapsedGroupsBySchedule={data.collapsedGroupsBySchedule}
 		themePreference={data.themePreference}
 		onboarding={data.onboarding}

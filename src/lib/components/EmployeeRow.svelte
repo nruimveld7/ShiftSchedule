@@ -35,6 +35,7 @@
     pointer: { clientX: number; clientY: number }
   ) => void = () => {};
   export let onHoverNameCell: (pointer: { clientX: number; clientY: number }) => void = () => {};
+  export let onSelectNameCell: (pointer: { clientX: number; clientY: number }) => void = () => {};
   export let onLeaveNameCell: () => void = () => {};
   export let onLeaveDayCell: () => void = () => {};
   export let ctrlMultiSelectedKeys = new Set<string>();
@@ -84,15 +85,24 @@
     return `${trimmed.slice(0, 22)}...`;
   })();
 
-  function handleRowSelect() {
+  function handleRowSelect(event: MouseEvent | KeyboardEvent | null = null) {
     const key = `name:${rowKey}`;
-    if (selectedCellKey === key) {
+    const wasNameCellSelected = selectedCellKey === key;
+    if (wasNameCellSelected) {
       onSelectRow(rowKey);
       onSelectCell('');
-      return;
+    } else {
+      onSelectRow(rowKey);
+      onSelectCell(key);
     }
-    onSelectRow(rowKey);
-    onSelectCell(key);
+    if (event instanceof MouseEvent) {
+      const pointer = { clientX: event.clientX, clientY: event.clientY };
+      if (wasNameCellSelected) {
+        onHoverNameCell(pointer);
+      } else {
+        onSelectNameCell(pointer);
+      }
+    }
   }
 
   function handleRowDoubleClick() {
@@ -118,20 +128,18 @@
   tabindex="0"
   aria-pressed={isRowSelected}
   aria-label={`Select row for ${employee.name}`}
-  on:click={handleRowSelect}
-  on:dblclick={handleRowDoubleClick}
+  on:click={(event) => handleRowSelect(event)}
   on:contextmenu={(event) => {
     event.preventDefault();
     handleRowDoubleClick();
   }}
-  use:longPress={{ onLongPress: handleRowDoubleClick }}
   on:mouseenter={(event) => onHoverNameCell({ clientX: event.clientX, clientY: event.clientY })}
   on:mousemove={(event) => onHoverNameCell({ clientX: event.clientX, clientY: event.clientY })}
   on:mouseleave={onLeaveNameCell}
   on:keydown={(event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      handleRowSelect();
+      handleRowSelect(event);
     }
   }}
 >

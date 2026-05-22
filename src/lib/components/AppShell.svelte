@@ -272,6 +272,8 @@
 	export let canAssignManagerRole = false;
 	export let canOpenScheduleSetup = false;
 	export let currentUserOid = '';
+	export let currentUserName: string | null = null;
+	export let currentUserEmail: string | null = null;
 	export let collapsedGroupsBySchedule: Record<number, Record<string, boolean>> = {};
 	export let themePreference: ThemePreference = 'system';
 	export let onboarding: { currentTier: number; targetTier: number; slides: OnboardingSlide[] } = {
@@ -310,6 +312,10 @@
 	let displayNameEditorError = '';
 	let displayNameEditorSaving = false;
 	let onboardingOpen = false;
+	let userMenuOpen = false;
+	let userMenuRootEl: HTMLDivElement | null = null;
+	let signOutInFlight = false;
+	let currentUserInitials = 'U';
 	let onboardingSlideIndex = 0;
 	let onboardingDontShowAgain = false;
 	let onboardingSaving = false;
@@ -1250,7 +1256,15 @@
 			email: info?.email ?? ''
 		};
 	});
-	$: calendarReminderGridSlots = Array.from({ length: MAX_EVENT_REMINDER_RECIPIENTS }, (_, index) => index);
+	$: calendarReminderGridSlots = Array.from(
+		{
+			length: Math.min(
+				MAX_EVENT_REMINDER_RECIPIENTS,
+				Math.max(1, calendarReminderRecipientOids.length + 1)
+			)
+		},
+		(_, index) => index
+	);
 	$: calendarRecipientPickerItems = calendarRecipientUsers
 		.filter((user) => !calendarReminderRecipientOids.includes(user.userOid))
 		.map((user) => ({ value: user.userOid, label: user.name }));
@@ -2807,6 +2821,62 @@
 		teamSetupOpen = true;
 	}
 
+	function resolveUserInitials(name: string | null, email: string | null, oid: string | null): string {
+		const rawName = (name ?? '').trim();
+		if (rawName) {
+			const commaParts = rawName
+				.split(',')
+				.map((part) => part.trim())
+				.filter(Boolean);
+			const normalizedName =
+				commaParts.length >= 2 ? `${commaParts[1]} ${commaParts[0]}` : rawName;
+			const parts = normalizedName.split(/\s+/).filter(Boolean);
+			if (parts.length >= 2) {
+				return ((parts[0].charAt(0) || '') + (parts[1].charAt(0) || '')).toUpperCase();
+			}
+			if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+		}
+
+		const fallback = (email ?? '').trim() || (oid ?? '').trim();
+		if (!fallback) return 'U';
+		const fallbackParts = fallback
+			.replace(/[@._-]+/g, ' ')
+			.trim()
+			.split(/\s+/)
+			.filter(Boolean);
+		if (fallbackParts.length === 0) return 'U';
+		if (fallbackParts.length === 1) return fallbackParts[0].slice(0, 2).toUpperCase();
+		return (
+			(fallbackParts[0].charAt(0) || '') + (fallbackParts[1].charAt(0) || '')
+		).toUpperCase();
+	}
+
+	function toggleUserMenu() {
+		userMenuOpen = !userMenuOpen;
+	}
+
+	async function signOut() {
+		if (signOutInFlight) return;
+		signOutInFlight = true;
+		userMenuOpen = false;
+		const returnTo = `${window.location.pathname}${window.location.search}`;
+		window.location.assign(`${base}/auth/logout?returnTo=${encodeURIComponent(returnTo)}`);
+	}
+
+	function handleGlobalKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && userMenuOpen) {
+			event.preventDefault();
+			userMenuOpen = false;
+		}
+	}
+
+	function onGlobalPointerDown(event: PointerEvent) {
+		const target = event.target as Node | null;
+		if (userMenuOpen && userMenuRootEl && target && !userMenuRootEl.contains(target)) {
+			userMenuOpen = false;
+		}
+	}
+
 	function closeTeamSetup() {
 		teamSetupOpen = false;
 	}
@@ -3188,6 +3258,8 @@
 		document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 		window.addEventListener('focus', handleVisibilityOrFocus);
 		window.addEventListener('pointerdown', handlePointerDownForPinnedCalendarTooltip, true);
+		window.addEventListener('pointerdown', onGlobalPointerDown, true);
+		window.addEventListener('keydown', handleGlobalKeydown, true);
 		requestAnimationFrame(updateAppScrollbar);
 		const onResize = () => {
 			updateAppScrollbar();
@@ -3206,6 +3278,8 @@
 			document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
 			window.removeEventListener('focus', handleVisibilityOrFocus);
 			window.removeEventListener('pointerdown', handlePointerDownForPinnedCalendarTooltip, true);
+			window.removeEventListener('pointerdown', onGlobalPointerDown, true);
+			window.removeEventListener('keydown', handleGlobalKeydown, true);
 			window.removeEventListener('resize', onResize);
 			window.removeEventListener('wheel', handleCalendarHoverTooltipWheel, true);
 			if (themeMediaQuery) {
@@ -3272,6 +3346,7 @@
 		onboardingSlidesForModal = onboarding.slides;
 		onboardingTargetTierForModal = onboarding.targetTier;
 	}
+	$: currentUserInitials = resolveUserInitials(currentUserName, currentUserEmail, currentUserOid);
 	$: onboardingCurrentTierState = Math.max(onboardingCurrentTierState, onboarding.currentTier);
 	$: if (onboardingSlideIndex >= onboardingSlidesForModal.length) {
 		onboardingSlideIndex = Math.max(0, onboardingSlidesForModal.length - 1);
@@ -3330,6 +3405,31 @@
 						>
 							?
 						</button>
+						<div class="userMenu" bind:this={userMenuRootEl}>
+							<button
+								type="button"
+								class="userMenuTrigger"
+								aria-label="Open user menu"
+								title="Open user menu"
+								aria-expanded={userMenuOpen}
+								on:click={toggleUserMenu}
+							>
+								{currentUserInitials}
+							</button>
+							{#if userMenuOpen}
+								<div class="userMenuPopover" role="menu" aria-label="User menu">
+									<button
+										type="button"
+										class="userMenuItem"
+										role="menuitem"
+										on:click={() => void signOut()}
+										disabled={signOutInFlight}
+									>
+										{signOutInFlight ? 'Signing out...' : 'Sign Out'}
+									</button>
+								</div>
+							{/if}
+						</div>
 					</div>
 				</div>
 

@@ -217,7 +217,7 @@
 	let hoverTooltipPointerY = 0;
 	let hoverTooltipTitle = '';
 	let hoverTooltipScopeType: EventScopeType = 'global';
-	let hoverTooltipWindowMode: 'day' | 'shift-month' = 'day';
+	let hoverTooltipWindowMode: 'day' | 'shift-month' | 'year' = 'day';
 	let hoverTooltipEntries: ScopedEventEntry[] = [];
 	let hoverTooltipLoading = false;
 	let hoverTooltipScope: HoverCellScope | null = null;
@@ -362,6 +362,10 @@
 		const lastDay = new Date(year, monthIndex + 1, 0).getDate();
 		const endIso = toIsoDate(year, monthIndex, lastDay);
 		return { startIso, endIso };
+	}
+
+	function yearWindowIso(year: number): { startIso: string; endIso: string } {
+		return { startIso: `${year}-01-01`, endIso: `${year}-12-31` };
 	}
 
 	function formatReminderPreviewDate(date: Date): string {
@@ -1821,6 +1825,63 @@
 		}
 	}
 
+	async function showUserYearHoverTooltip(
+		employee: Employee,
+		groupShiftId: number | null,
+		pointer: { clientX: number; clientY: number }
+	) {
+		if (!canUseHoverTooltips) return;
+		if (memberEventsPopupOpen) return;
+		const userOid = employee.userOid ?? null;
+		const { startIso, endIso } = yearWindowIso(selectedYear);
+		const title = `${selectedYear} Events - ${employee.name}`;
+		positionHoverTooltipAtPointer(pointer.clientX, pointer.clientY);
+		hoverTooltipTitle = title;
+		hoverTooltipScopeType = 'user';
+		hoverTooltipWindowMode = 'year';
+		hoverTooltipOpen = true;
+		if (!userOid) {
+			hoverTooltipLoading = false;
+			hoverTooltipEntries = [];
+			return;
+		}
+		const shiftKey = groupShiftId ?? 0;
+		const cacheKey = eventsCacheKey(
+			`year-user:${selectedYear}:${shiftKey}:${userOid}`,
+			'user',
+			groupShiftId,
+			userOid
+		);
+		const cachedEntries = scopedEventsCache.get(cacheKey);
+		if (cachedEntries) {
+			hoverTooltipLoading = false;
+			hoverTooltipEntries = cachedEntries;
+			positionHoverTooltipAtPointer(hoverTooltipPointerX, hoverTooltipPointerY);
+			return;
+		}
+
+		hoverTooltipLoading = true;
+		hoverTooltipEntries = [];
+		const fetchToken = ++hoverTooltipFetchToken;
+		try {
+			const nextEntries = await fetchScopedEvents(
+				{ startIso, endIso },
+				'user',
+				groupShiftId,
+				userOid
+			);
+			scopedEventsCache.set(cacheKey, nextEntries);
+			if (fetchToken !== hoverTooltipFetchToken || memberEventsPopupOpen) return;
+			hoverTooltipLoading = false;
+			hoverTooltipEntries = nextEntries;
+			positionHoverTooltipAtPointer(hoverTooltipPointerX, hoverTooltipPointerY);
+		} catch (error) {
+			if (fetchToken !== hoverTooltipFetchToken) return;
+			void error;
+			hideHoverEventsTooltip();
+		}
+	}
+
 	function handleEmployeeDayHover(
 		employee: Employee,
 		groupShiftId: number | null,
@@ -2062,7 +2123,15 @@
 			email: info?.email ?? ''
 		};
 	});
-	$: reminderGridSlots = Array.from({ length: MAX_EVENT_REMINDER_RECIPIENTS }, (_, index) => index);
+	$: reminderGridSlots = Array.from(
+		{
+			length: Math.min(
+				MAX_EVENT_REMINDER_RECIPIENTS,
+				Math.max(1, reminderRecipientOids.length + 1)
+			)
+		},
+		(_, index) => index
+	);
 	$: recipientPickerItems = recipientUsers
 		.filter((user) => !reminderRecipientOids.includes(user.userOid))
 		.map((user) => ({ value: user.userOid, label: user.name }));
@@ -3197,6 +3266,7 @@
 						</div>
 					</div>
 					{#each group.employees as employee, employeeIndex (employee.userOid ?? `${group.category}:${employee.name}:${employeeIndex}`)}
+						{@const employeeRowKey = makeRowKey(group.category, employee.userOid ?? employee.name)}
 						<EmployeeRow
 							{employee}
 							groupName={group.category}
@@ -3214,7 +3284,7 @@
 							isFirstInGroup={employeeIndex === 0}
 							isLastInGroup={employeeIndex === group.employees.length - 1}
 							onOpenDisplayNameEditor={onEmployeeDoubleClick}
-							rowKey={makeRowKey(group.category, employee.userOid ?? employee.name)}
+							rowKey={employeeRowKey}
 							{selectedRowKey}
 							{selectedCellKey}
 							onSelectRow={handleRowSelect}
@@ -3224,8 +3294,18 @@
 							onDoubleClickDayCell={(employee, day) =>
 								handleEmployeeDayDoubleClick(employee, group.employeeTypeId ?? null, day)}
 							onDayCellContextMenu={handleEmployeeDayContextMenu}
-							onHoverNameCell={(pointer) =>
-								void showUserMonthHoverTooltip(employee, group.employeeTypeId ?? null, pointer)}
+							onHoverNameCell={(pointer) => {
+								if (
+									selectedRowKey === employeeRowKey &&
+									selectedCellKey === `name:${employeeRowKey}`
+								) {
+									void showUserYearHoverTooltip(employee, group.employeeTypeId ?? null, pointer);
+									return;
+								}
+								void showUserMonthHoverTooltip(employee, group.employeeTypeId ?? null, pointer);
+							}}
+							onSelectNameCell={(pointer) =>
+								void showUserYearHoverTooltip(employee, group.employeeTypeId ?? null, pointer)}
 							onLeaveNameCell={hideHoverEventsTooltip}
 							onHoverDayCell={(day, _cellEl, pointer) =>
 								handleEmployeeDayHover(employee, group.employeeTypeId ?? null, day, pointer)}
@@ -3271,7 +3351,7 @@
 										<strong>{eventRow.eventCodeCode}</strong>
 										<span>{eventRow.eventCodeName}{scopeSuffix ? ` - ${scopeSuffix}` : ''}</span>
 									</div>
-									{#if hoverTooltipWindowMode === 'shift-month' || eventRow.startDate !== eventRow.endDate}
+									{#if hoverTooltipWindowMode !== 'day' || eventRow.startDate !== eventRow.endDate}
 										<div class="memberEventDates">
 											{formatEventDateOrRange(eventRow.startDate, eventRow.endDate)}
 										</div>

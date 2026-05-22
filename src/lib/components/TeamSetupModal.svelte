@@ -4169,7 +4169,12 @@
 		};
 	});
 	$: eventCodeReminderGridSlots = Array.from(
-		{ length: EVENT_CODE_MAX_RECIPIENTS },
+		{
+			length: Math.min(
+				EVENT_CODE_MAX_RECIPIENTS,
+				Math.max(1, eventCodeReminderRecipientOids.length + 1)
+			)
+		},
 		(_, index) => index
 	);
 	$: eventCodeRecipientPickerItems = sortedUsers
